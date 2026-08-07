@@ -1,0 +1,7 @@
+# Aucune donnee de jeu ne doit etre publiee
+*.bin
+*.st[0-9]
+*.nv
+*.zip
+*.cdi
+__pycache__/
