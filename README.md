@@ -31,18 +31,35 @@ PowerPC — ne donne rien. La CROM de *Fighting Vipers 2* ne contient aucune
 chaîne lisible et aucun code exploitable, en dehors d'un court amorçage à
 l'adresse de boot.
 
-**Le programme est compressé (LZSS) et décompressé en RAM au démarrage.** Le
-menu de test interne du jeu le confirme d'ailleurs : il expose une entrée
-`LZSS_INFO`.
+**Le programme est compressé et décompressé en RAM au démarrage** — et il
+s'agit de **gzip**, pas de LZSS.
+
+> **Correction du 2026-08-22.** Ces notes ont longtemps dit « LZSS », sur la
+> foi de l'entrée `LZSS_INFO` du menu de test interne. L'étiquette de Sega ne
+> décrit pas l'algorithme. La CROM commence, à l'offset 0, par un **fichier
+> gzip complet** : magie `1f 8b`, méthode 8 (deflate), nom d'origine
+> `foo.bin`, compressé le **26 mars 1998 à 16:01:08 UTC** sur un système Unix.
+> 897 285 octets qui en donnent 2 701 982.
+>
+> Trois vérifications concordantes : les tables canoniques de DEFLATE sont
+> dans l'amorçage en 16 bits big-endian (`cplens` `0xFFF03604`, `cplext`
+> `0xFFF03642`, `cpdist` `0xFFF03680`) et le décompresseur est le
+> `huft_build` de zlib ; `zlib.decompressobj(-15)` déroule le flux entier et
+> **le CRC32 du pied gzip concorde** ; le contenu obtenu se pose en **RAM à
+> l'adresse 0**, identique à 99,9 % à un relevé de RAM en cours de partie.
 
 Deux conséquences pratiques, qui orientent toute la suite :
 
-1. L'objet à analyser est l'**image de la RAM**, pas la ROM. Chargée dans un
-   désassembleur en PowerPC big-endian, base 0, elle donne du code lisible —
-   et les adresses documentées par The Cutting Room Floor y tombent juste.
-2. **Aucun patch permanent de la ROM n'est possible** sans reverser le
-   compresseur et la chaîne de construction d'origine. Tout ce qui est
-   décrit ici est appliqué à l'exécution.
+1. L'objet à analyser est l'**image décompressée**, pas la ROM brute. Chargée
+   dans un désassembleur en PowerPC big-endian, base 0, elle donne du code
+   lisible — et les adresses documentées par The Cutting Room Floor y tombent
+   juste. On l'obtient soit d'un relevé de RAM, soit directement du zip.
+2. **Le patch permanent de la ROM est possible.** Il n'y a rien à reverser :
+   on décompresse, on modifie, on recompresse avec la bibliothèque standard.
+   Le gzip d'origine fait 897 285 octets, celui que produit Python en niveau 9
+   pour le même contenu en fait 882 022 — **15 263 octets de marge**, donc un
+   patch tient à la même place. Reste une seule marche, ré-entrelacer la CROM
+   sur les quatre EPROM pour reconstruire un zip jouable.
 
 ### Obtenir l'image RAM
 
@@ -284,6 +301,7 @@ Scripts Python, sans dépendance, pour Windows.
 | `extract_ram.py` | extrait l'image RAM d'une sauvegarde d'état |
 | `dump_state.py` | énumère et extrait les blocs d'une sauvegarde d'état |
 | `symbols.py` | reconstruit la carte de symboles depuis l'image RAM |
+| `gzip_crom.py` | extrait et réinjecte le programme, qui est un fichier gzip |
 | `displaylist.py` | décode la liste d'affichage : quels éléments sont dessinés |
 | `dl_watch.py` | surveille des éléments graphiques en continu |
 
@@ -320,8 +338,8 @@ demanderait d'injecter du code.
 
 Ces notes portent sur la révision japonaise `fvipers2` telle que reconnue par
 Supermodel. Les adresses citées sont des adresses **RAM**, valides une fois le
-programme décompressé ; elles n'ont pas de correspondance directe dans les
-fichiers ROM.
+programme décompressé. Elles se retrouvent telles quelles dans l'image tirée
+du gzip de la CROM, ce qui rend le patch permanent possible.
 
 Le dépôt ne contient **aucune sortie de décompilateur** : les mécanismes sont
 décrits, pas retranscrits. Les adresses, valeurs et comportements relèvent de

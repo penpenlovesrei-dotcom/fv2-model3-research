@@ -30,17 +30,34 @@ The obvious first move — deinterleave the ROMs and look for PowerPC code —
 yields nothing. The *Fighting Vipers 2* CROM contains no readable strings and
 no usable code beyond a short boot stub.
 
-**The program is LZSS-compressed and decompressed into RAM at startup.** The
-game's own internal test menu confirms it: one of its entries is `LZSS_INFO`.
+**The program is compressed and decompressed into RAM at startup** — and the
+format is **gzip**, not LZSS.
+
+> **Corrected 2026-08-22.** These notes long said "LZSS", on the strength of
+> the internal test menu's `LZSS_INFO` entry. Sega's label does not describe
+> the algorithm. The CROM opens, at offset 0, with a **complete gzip file**:
+> magic `1f 8b`, method 8 (deflate), original filename `foo.bin`, compressed
+> on **1998-03-26 at 16:01:08 UTC** on a Unix system. 897,285 bytes yielding
+> 2,701,982.
+>
+> Three concordant checks: DEFLATE's canonical tables sit in the boot stub as
+> 16-bit big-endian words (`cplens` `0xFFF03604`, `cplext` `0xFFF03642`,
+> `cpdist` `0xFFF03680`) and the decompressor is zlib's `huft_build`;
+> `zlib.decompressobj(-15)` runs the whole stream and **the gzip trailer's
+> CRC32 matches**; the result lands in **RAM at address 0**, identical to
+> 99.9% against a RAM capture taken mid-game.
 
 Two practical consequences shape everything that follows:
 
-1. The object to analyse is the **RAM image**, not the ROM. Loaded into a
-   disassembler as big-endian PowerPC at base 0, it yields readable code —
-   and the addresses documented by The Cutting Room Floor land exactly.
-2. **No permanent ROM patch is possible** without reversing the compressor
-   and the original build chain. Everything described here is applied at
-   runtime.
+1. The object to analyse is the **decompressed image**, not the raw ROM.
+   Loaded into a disassembler as big-endian PowerPC at base 0, it yields
+   readable code — and the addresses documented by The Cutting Room Floor land
+   exactly. It can come from a RAM capture or straight from the zip.
+2. **A permanent ROM patch is possible.** Nothing needs reversing: decompress,
+   edit, recompress with the standard library. The original gzip is 897,285
+   bytes; Python at level 9 produces 882,022 for the same content — **15,263
+   bytes of headroom**, so a patch fits in place. One step remains:
+   re-interleaving the CROM across the four EPROMs to rebuild a playable zip.
 
 ### Getting the RAM image
 
@@ -267,6 +284,7 @@ Python scripts, no dependencies, for Windows.
 | `extract_ram.py` | extract the RAM image from a save state |
 | `dump_state.py` | list and extract save state blocks |
 | `symbols.py` | rebuild the symbol map from the RAM image |
+| `gzip_crom.py` | extract and reinject the program, which is a gzip file |
 | `displaylist.py` | decode the display list: which elements are drawn |
 | `dl_watch.py` | watch graphic elements continuously |
 
@@ -301,7 +319,8 @@ substituting is not adding: a menu would require injecting code.
 
 These notes cover the Japanese revision `fvipers2` as recognised by
 Supermodel. The addresses quoted are **RAM** addresses, valid once the program
-is decompressed; they have no direct counterpart in the ROM files.
+is decompressed. They are found unchanged in the image pulled from the CROM's
+gzip, which is what makes a permanent patch possible.
 
 This repository contains **no decompiler output**: mechanisms are described,
 not transcribed. Addresses, values and behaviours are documentation, in the
