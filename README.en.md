@@ -18,6 +18,7 @@ databases, nor in the Dreamcast guides.
 - [Unlocking the whole roster](#unlocking-the-whole-roster-one-and-a-half-bytes)
 - [Playing in English](#playing-in-english)
 - [Survival mode](#survival-mode)
+- [The stage table and the training stage](#the-stage-table-and-the-training-stage)
 - [Tools](#tools)
 - [Open questions](#open-questions)
 - [Scope and limits](#scope-and-limits)
@@ -272,6 +273,110 @@ The bundled `symbols.csv` lists 84 symbols, 56 of them from these tables.
 
 ---
 
+## The stage table and the training stage
+
+Measured 2026-10-20 on the arcade program image and on the Dreamcast version's
+`1ST_READ.BIN`, by searching for references to the stage name pointers. This
+table is documented nowhere else.
+
+**27 records of `0x70` bytes**, in the order of the name list, and both
+versions keep it in the same logical place:
+
+| | arcade | Dreamcast |
+|---|---|---|
+| table | RAM `0x00075170` | file `0x0010763C` |
+| names | `0x000887D9` | `0x000CD1D4` |
+| load base | 0 | `0x8C010000` |
+
+The names are the same on both sides, in the same order: `TEST`, `WESTERN`,
+`AC_CARRIER`, `ROOM_00`, `GREAT_BM`, `FURNACE`, `STORE`, `HANGAR`, `CAPSULE`,
+`DAM`, `TOWER`, `BUILDING`, `MUSEUM`, then `FINISH00` to `FINISH05`, the seven
+`ADV_*` of the attract mode, and `SELECT`.
+
+### The fields
+
+```
++0x00  pointer to the name
++0x04  pointer to a byte list, shared between several stages
++0x08  pointer to the resource list — 8 identifiers, see below
++0x0C ) up to three code pointers (arcade: 0x00018424-0x00018CC4).
++0x10 ) TEST has none, WESTERN two, TOWER and BUILDING use +0x0C.
++0x18 ) Candidates for the interactive and destructible objects.
++0x1C  pointer to byte lists (arcade 0x001154B0-0x001155CE)
++0x20  pointer to a 0x1F8-byte block, one per stage, in order
++0x24  identical for all 27: a shared block
++0x28  identical for all 27: the same one
++0x2C  5.0f, identical for all 27
++0x30..+0x48  camera floats (distances and limits)
++0x4C..+0x54  small floats, often zero
++0x58  0.0040833f, identical for all 27
++0x5C  colour pairs, highly variable
++0x60  an index (0x27-0x3A) in the high half, 0xFF in the low — role unestablished
++0x64  ARGB: fog or ambient (TEST: 0xFFAA0000, unique)
++0x68  0x000001FF, or 0x010001FF for TOWER and BUILDING
++0x6C  3, identical for all 27
+```
+
+The `0x1F8`-byte block at `+0x20` holds a family of normalised plane triplets
+(±0.05, ±1.083, ±0.05): collision or cage, **not proven**.
+
+### The field that decides: `+0x08`
+
+The list of 8 identifiers it points at has the stage's **own geometry** as its
+fourth entry. That is where — and only where — the two versions diverge:
+
+| stage | arcade | Dreamcast |
+|---|---|---|
+| **TEST** | **`0x00000000` — empty** | **`0x001800F0` — index 0x18** |
+| WESTERN | `0x00A01001` | `0x000100F0` |
+| FURNACE | `0x00A01002` | `0x000200F0` |
+| AC_CARRIER | `0x00A01003` | `0x000300F0` |
+| CAPSULE | `0x00A01004` | `0x000400F0` |
+| HANGAR | `0x00A01005` | `0x000500F0` |
+| MUSEUM | `0x00A0100A` | `0x000A00F0` |
+| BUILDING | `0x00A0100B` | `0x000B00F0` |
+| ROOM_00 | `0x00A0100C` | `0x000C00F0` |
+| STORE | `0x00A0100D` | `0x000D00F0` |
+| DAM | `0x00A0100E` | `0x000E00F0` |
+| TOWER | `0x00A01010` | `0x001000F0` |
+| GREAT_BM | `0x00A01012` | `0x001200F0` |
+
+The twelve fighting stages carry the same index on both sides. The kinds map
+one to one: arcade `0xA0/0x10` ↔ Dreamcast `0x00F0` (stage geometry),
+`0xA0/0x2E` ↔ `0x03A9`, `0xA0/0x2F` ↔ `0x04A9`, `0xA1/0x0B` ↔ `0x00FF`.
+
+And the full enumeration of the stage-geometry kind reads in the clear in both
+images:
+
+- arcade `0x000EC048`: `00A01000` … `00A01013`, **20 slots (0x00–0x13)**
+- Dreamcast `0x00102420`: `000000F0` … `001800F0`, **25 slots (0x00–0x18)**
+
+**`TEST` is the training stage, and its geometry exists only on Dreamcast.**
+The console added slots 0x14 to 0x18 and pointed `TEST` at the last of the five
+— the signature of a late addition, consistent with the rest of what exists
+only on console (`EMI` at index 11 in place of `TECHNO` and `DURAL`, Kuhn's
+unlock completed).
+
+The arcade carries **everything else** about the stage: its name, the whole
+record, its camera parameters, its own fog colour, its `0x1F8` block. Only the
+geometry resource is missing. And its own kind has eight enumerated, unused
+slots — 0, 6, 7, 8, 9, 0xF, 0x11, 0x13.
+
+### Two lessons in method
+
+**A name table says nothing about content.** Both versions' name lists are
+identical name for name, which at first led to the conclusion that no stage was
+exclusive. That is wrong: a name list enumerates the slots that were
+*planned*, filled or empty. Each record has to be followed through to its
+payload.
+
+**Resource identifiers are not addresses.** The `0x00A0xxxx` values, walked as
+Real3D models with `model3d.py`, fail at the very first polygon on the face
+normal's magnitude. They are `(kind, index)` identifiers, resolved by code that
+has not yet been found.
+
+---
+
 ## Tools
 
 Python scripts, no dependencies, for Windows.
@@ -287,6 +392,18 @@ Python scripts, no dependencies, for Windows.
 | `gzip_crom.py` | extract and reinject the program, which is a gzip file |
 | `displaylist.py` | decode the display list: which elements are drawn |
 | `dl_watch.py` | watch graphic elements continuously |
+| `build_crom.py` | reinterleave the zip's ROMs into CROM and VROM, and split a patched CROM back into EPROMs |
+| `decors.py` | the stage table of both versions, and what separates them |
+| `model3d.py` | walk a Real3D model out of the VROM, and tell whether an address is one |
+| `cdi.py` | open the Dreamcast image and extract its files |
+| `afs.py` | read the Dreamcast version's AFS archives |
+| `nuage.py` | render a point cloud of the Dreamcast models, with no decoder |
+
+Four `.cmd` launchers chain what is needed, with no command line to retype:
+**Reconstruire les ROM arcade**, **Ouvrir le disque Dreamcast**,
+**Table des décors**, **Profil des modèles Dreamcast**. The default paths to
+the MAME zip and the Dreamcast image are overridden by the `FV2_ZIP` and
+`FV2_CDI` environment variables.
 
 `symbols.csv` can be reapplied to a Ghidra project to recover original names
 instead of auto-generated labels.
@@ -307,6 +424,25 @@ variable by comparing four save states taken on four different screens
 produced nothing convincing. Progress requires **observing execution flow**,
 which the public Supermodel build does not allow — its debugger is a compile
 time option absent from distributed binaries.
+
+**Resolving a resource identifier.** A stage names its geometry by a
+`(kind, index)` pair, and the kind's enumeration reads in the clear in both
+versions — but the code that turns that pair into data has not been found.
+That is the only lock left on the training stage: it would tell which entry of
+`MDL_DAT.AFS` carries index 0x18.
+
+**The model format of `MDL_DAT.AFS`.** A record begins with four PowerVR2 Tile
+Accelerator parameter words baked into the file (Parameter Control, ISP/TSP,
+TSP, Texture Control), followed by a bounding box, counters and blocks of
+floats. The Texture Control's address field is 0: it is filled in at load
+time, which is why the entries of `TEX_DAT.AFS` carry no `PVRT` or `GBIX`
+header. The texture format itself is documented elsewhere: `celsowm/vf3-decomp`,
+`docs/formats/TEX.md` — no header, little-endian RGB565, PVR twiddle by tiles.
+Size and format read out of the model's own words: TSP bits 0-5 for U and V,
+Texture Control bits 30-27 for the format.
+
+**The role of the stage table's `+0x60` and `+0x68` fields**, and proof that
+the `0x1F8`-byte block really carries the collision.
 
 **Adding elements on screen.** The drawing API is understood: a routine pushes
 packets into a display list, drawing from an element table, and each element

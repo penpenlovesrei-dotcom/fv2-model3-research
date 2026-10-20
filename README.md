@@ -18,6 +18,7 @@ les bases de codes de triche, ni dans les guides de la version Dreamcast.
 - [Débloquer tout le roster](#débloquer-tout-le-roster-un-octet-et-demi)
 - [Jouer en anglais](#jouer-en-anglais)
 - [Mode Survival](#mode-survival)
+- [La table de décors et le décor d'entraînement](#la-table-de-décors-et-le-décor-dentraînement)
 - [Les outils](#les-outils)
 - [Questions ouvertes](#questions-ouvertes)
 - [Portée et limites](#portée-et-limites)
@@ -289,6 +290,110 @@ tables.
 
 ---
 
+## La table de décors et le décor d'entraînement
+
+Mesuré le 2026-10-20 sur l'image du programme arcade et sur le `1ST_READ.BIN`
+de la version Dreamcast, en cherchant les références aux pointeurs de noms de
+décors. Cette table n'est documentée nulle part ailleurs.
+
+**27 enregistrements de `0x70` octets**, dans l'ordre de la liste de noms, et
+les deux versions la rangent au même endroit logique :
+
+| | arcade | Dreamcast |
+|---|---|---|
+| table | RAM `0x00075170` | fichier `0x0010763C` |
+| noms | `0x000887D9` | `0x000CD1D4` |
+| base de chargement | 0 | `0x8C010000` |
+
+Les noms sont les mêmes des deux côtés, dans le même ordre : `TEST`, `WESTERN`,
+`AC_CARRIER`, `ROOM_00`, `GREAT_BM`, `FURNACE`, `STORE`, `HANGAR`, `CAPSULE`,
+`DAM`, `TOWER`, `BUILDING`, `MUSEUM`, puis `FINISH00` à `FINISH05`, les sept
+`ADV_*` de l'attract mode, et `SELECT`.
+
+### Les champs
+
+```
++0x00  pointeur vers le nom
++0x04  pointeur vers une liste d'octets, partagée entre plusieurs décors
++0x08  pointeur vers la liste de ressources — 8 identifiants, voir plus bas
++0x0C ) jusqu'à trois pointeurs de code (arcade : 0x00018424-0x00018CC4).
++0x10 ) TEST n'en a aucun, WESTERN deux, TOWER et BUILDING utilisent +0x0C.
++0x18 ) Candidats pour les objets interactifs et destructibles.
++0x1C  pointeur vers des listes d'octets (arcade 0x001154B0-0x001155CE)
++0x20  pointeur vers un bloc de 0x1F8 octets, un par décor, dans l'ordre
++0x24  identique pour les 27 : un bloc commun
++0x28  identique pour les 27 : le même
++0x2C  5.0f, identique pour les 27
++0x30..+0x48  flottants de caméra (distances et limites)
++0x4C..+0x54  petits flottants, souvent nuls
++0x58  0.0040833f, identique pour les 27
++0x5C  paires de couleurs, très variables
++0x60  un index (0x27-0x3A) en poids fort, 0xFF en poids faible — rôle non établi
++0x64  ARGB : brouillard ou ambiance (TEST : 0xFFAA0000, unique)
++0x68  0x000001FF, ou 0x010001FF pour TOWER et BUILDING
++0x6C  3, identique pour les 27
+```
+
+Le bloc de `0x1F8` octets pointé par `+0x20` contient une famille de triplets
+de plans normalisés (±0.05, ±1.083, ±0.05) : collision ou cage, **non prouvé**.
+
+### Le champ qui tranche : `+0x08`
+
+La liste de 8 identifiants qu'il pointe a pour quatrième entrée la **géométrie
+propre du décor**. C'est là, et seulement là, que les deux versions divergent :
+
+| décor | arcade | Dreamcast |
+|---|---|---|
+| **TEST** | **`0x00000000` — vide** | **`0x001800F0` — index 0x18** |
+| WESTERN | `0x00A01001` | `0x000100F0` |
+| FURNACE | `0x00A01002` | `0x000200F0` |
+| AC_CARRIER | `0x00A01003` | `0x000300F0` |
+| CAPSULE | `0x00A01004` | `0x000400F0` |
+| HANGAR | `0x00A01005` | `0x000500F0` |
+| MUSEUM | `0x00A0100A` | `0x000A00F0` |
+| BUILDING | `0x00A0100B` | `0x000B00F0` |
+| ROOM_00 | `0x00A0100C` | `0x000C00F0` |
+| STORE | `0x00A0100D` | `0x000D00F0` |
+| DAM | `0x00A0100E` | `0x000E00F0` |
+| TOWER | `0x00A01010` | `0x001000F0` |
+| GREAT_BM | `0x00A01012` | `0x001200F0` |
+
+Les douze décors de combat portent le même index des deux côtés. Les genres se
+correspondent un à un : arcade `0xA0/0x10` ↔ Dreamcast `0x00F0` (géométrie de
+décor), `0xA0/0x2E` ↔ `0x03A9`, `0xA0/0x2F` ↔ `0x04A9`, `0xA1/0x0B` ↔ `0x00FF`.
+
+Et l'énumération complète du genre « géométrie de décor » se lit en clair dans
+les deux images :
+
+- arcade `0x000EC048` : `00A01000` … `00A01013`, **20 créneaux (0x00–0x13)**
+- Dreamcast `0x00102420` : `000000F0` … `001800F0`, **25 créneaux (0x00–0x18)**
+
+**`TEST` est le décor d'entraînement, et sa géométrie n'existe que sur
+Dreamcast.** La console a ajouté les créneaux 0x14 à 0x18 et fait pointer `TEST`
+sur le dernier des cinq — la signature d'un ajout tardif, cohérente avec le
+reste de ce qui n'existe que sur console (`EMI` à l'indice 11 à la place de
+`TECHNO` et `DURAL`, le déblocage de Kuhn complété).
+
+L'arcade, elle, porte **tout le reste** du décor : son nom, son enregistrement
+entier, ses paramètres de caméra, sa couleur de brouillard propre, son bloc de
+`0x1F8`. Seule la ressource de géométrie manque. Et son propre genre a huit
+créneaux énumérés et inutilisés — 0, 6, 7, 8, 9, 0xF, 0x11, 0x13.
+
+### Deux leçons de méthode
+
+**Une table de noms ne dit rien du contenu.** Les listes de noms des deux
+versions sont identiques nom pour nom, ce qui a d'abord fait conclure qu'aucun
+décor n'était exclusif. C'est faux : une liste de noms énumère les créneaux
+*prévus*, pleins ou vides. Il faut suivre chaque enregistrement jusqu'à sa
+charge utile.
+
+**Les identifiants de ressource ne sont pas des adresses.** Les `0x00A0xxxx`
+déroulés comme des modèles Real3D avec `model3d.py` échouent dès le premier
+polygone, sur la norme de la normale de face. Ce sont des identifiants
+`(genre, index)`, résolus par un code qui n'est pas encore trouvé.
+
+---
+
 ## Les outils
 
 Scripts Python, sans dépendance, pour Windows.
@@ -304,6 +409,18 @@ Scripts Python, sans dépendance, pour Windows.
 | `gzip_crom.py` | extrait et réinjecte le programme, qui est un fichier gzip |
 | `displaylist.py` | décode la liste d'affichage : quels éléments sont dessinés |
 | `dl_watch.py` | surveille des éléments graphiques en continu |
+| `build_crom.py` | ré-entrelace les ROM du zip en CROM et en VROM, et redécoupe une CROM patchée en EPROM |
+| `decors.py` | la table de décors des deux versions, et ce qui les sépare |
+| `model3d.py` | déroule un modèle Real3D depuis le VROM, et dit si une adresse en est un |
+| `cdi.py` | ouvre l'image Dreamcast et en sort les fichiers |
+| `afs.py` | lit les archives AFS de la version Dreamcast |
+| `nuage.py` | rend un nuage de points des modèles Dreamcast, sans décodeur |
+
+Quatre lanceurs `.cmd` enchaînent ce qu'il faut, sans ligne à recopier :
+**Reconstruire les ROM arcade**, **Ouvrir le disque Dreamcast**,
+**Table des décors**, **Profil des modèles Dreamcast**. Les chemins par défaut
+du zip MAME et de l'image Dreamcast se surchargent par les variables
+d'environnement `FV2_ZIP` et `FV2_CDI`.
 
 `symbols.csv` est réinjectable dans un projet Ghidra pour retrouver les noms
 d'origine plutôt que des étiquettes automatiques.
@@ -325,6 +442,26 @@ sauvegardes prises sur quatre écrans différents n'a rien donné de
 convaincant. La suite demande d'**observer le flot d'exécution**, ce que la
 build publique de Supermodel ne permet pas — son débogueur est une option de
 compilation absente des binaires distribués.
+
+**La résolution d'un identifiant de ressource.** Un décor nomme sa géométrie
+par un couple `(genre, index)`, et l'énumération du genre se lit en clair dans
+les deux versions — mais le code qui transforme ce couple en données n'est pas
+trouvé. C'est le seul verrou sur le décor d'entraînement : il faudrait savoir
+quelle entrée de `MDL_DAT.AFS` porte l'index 0x18.
+
+**Le format de modèle de `MDL_DAT.AFS`.** Un enregistrement commence par quatre
+mots de paramètre du Tile Accelerator du PowerVR2 pré-cuits dans le fichier
+(Parameter Control, ISP/TSP, TSP, Texture Control), suivis d'une boîte
+englobante, de compteurs et de blocs de flottants. Le champ adresse du Texture
+Control vaut 0 : il est renseigné au chargement, ce qui explique que les
+entrées de `TEX_DAT.AFS` n'aient aucun en-tête `PVRT` ni `GBIX`. Le format des
+textures, lui, est documenté ailleurs : `celsowm/vf3-decomp`,
+`docs/formats/TEX.md` — pas d'en-tête, RGB565 petit-boutien, twiddle PVR par
+tuiles. Taille et format se lisent dans les mots du modèle : bits 0-5 du TSP
+pour U et V, bits 30-27 du Texture Control pour le format.
+
+**Le rôle des champs `+0x60` et `+0x68` de la table de décors**, et la preuve
+que le bloc de `0x1F8` octets porte bien la collision.
 
 **L'ajout d'éléments à l'écran.** L'API de dessin est comprise : une routine
 empile des paquets dans une liste d'affichage, en piochant dans une table

@@ -5,3 +5,16 @@
 *.zip
 *.cdi
 __pycache__/
+
+# Images et archives reconstruites ou extraites (jamais publiees)
+*.BIN
+*.afs
+*.AFS
+*.pvr
+*.PVR
+dreamcast/
+eprom/
+
+# Sorties des outils de mesure
+*.png
+nuages/
