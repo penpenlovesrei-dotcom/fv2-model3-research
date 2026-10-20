@@ -18,3 +18,9 @@ eprom/
 # Sorties des outils de mesure
 *.png
 nuages/
+
+# Geometrie et textures extraites du jeu : jamais publiees
+*.obj
+*.mtl
+textures_dc/
+geometrie_dc/

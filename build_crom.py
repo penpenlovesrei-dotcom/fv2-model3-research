@@ -23,7 +23,8 @@ Le zip se surcharge par la variable d'environnement `FV2_ZIP`.
 Usage :
     py -3 build_crom.py crom              -> fv2_crom_swap16.bin  (8 Mio)
     py -3 build_crom.py vrom              -> fv2_vrom.bin         (64 Mio)
-    py -3 build_crom.py tout              -> les deux
+    py -3 build_crom.py banked            -> fv2_banked.bin       (64 Mio)
+    py -3 build_crom.py tout              -> les trois
     py -3 build_crom.py eprom <crom.bin>  -> eprom/epr-2059*.bin + leurs CRC32
 """
 
@@ -42,6 +43,15 @@ CROM_TAILLE = 0x800000
 # les seize ROM de texture ; pas de 32, morceaux de 2, sans echange
 VROM = [(f"mpr-{20580 + i}.{26 + i}", i * 2) for i in range(16)]
 VROM_TAILLE = 0x4000000
+# La banked CROM : 64 Mio en quatre groupes de quatre ROM de 4 Mio, chaque
+# groupe entrelace comme la CROM (pas de 8, morceaux de 2, echange 16 bits) et
+# pose a 16 Mio d'intervalle. C'est la que le jeu range ses donnees : le
+# programme decompresse ne fait que 2,7 Mio, tout le reste est ici.
+BANKED = [(f"mpr-{20563 - j}.{4 - j}", j * 2 + 0x0000000) for j in range(4)] + \
+         [(f"mpr-{20567 - j}.{8 - j}", j * 2 + 0x1000000) for j in range(4)] + \
+         [(f"mpr-{20571 - j}.{12 - j}", j * 2 + 0x2000000) for j in range(4)] + \
+         [(f"mpr-{20575 - j}.{16 - j}", j * 2 + 0x3000000) for j in range(4)]
+BANKED_TAILLE = 0x4000000
 
 
 def entrelace(z, roms, taille, pas):
@@ -77,6 +87,23 @@ def vrom(z):
     print(f"{s.name} : {len(d)} octets, {vides} bloc(s) de 2 Kio entierement nuls sur {len(d) // 2048}")
 
 
+def banked(z):
+    out = bytearray(BANKED_TAILLE)
+    for nom, dep in BANKED:
+        d = z.read(nom)
+        groupe = dep & 0xF000000
+        local = dep & 0xF
+        for i in range(0, len(d), 2):
+            o = groupe + local + (i // 2) * 8
+            out[o:o + 2] = d[i:i + 2]
+    out = swap16(out)
+    s = ICI / "fv2_banked.bin"
+    s.write_bytes(bytes(out))
+    vides = sum(1 for i in range(len(out) // 2048) if not any(out[i * 2048:(i + 1) * 2048]))
+    print(f"{s.name} : {len(out)} octets, {vides} bloc(s) de 2 Kio entierement nuls "
+          f"sur {len(out) // 2048}")
+
+
 def eprom(chemin):
     """Decoupe une CROM de 8 Mio en ses quatre EPROM, et rend leurs CRC32."""
     d = pathlib.Path(chemin).read_bytes()
@@ -108,5 +135,7 @@ if __name__ == "__main__":
                 crom(z)
             if quoi in ("vrom", "tout"):
                 vrom(z)
-            if quoi not in ("crom", "vrom", "tout"):
+            if quoi in ("banked", "tout"):
+                banked(z)
+            if quoi not in ("crom", "vrom", "banked", "tout"):
                 raise SystemExit(__doc__)
