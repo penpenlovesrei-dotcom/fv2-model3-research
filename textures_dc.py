@@ -295,33 +295,109 @@ def cmd_banques():
             print(f"      -> {s.relative_to(ICI)}")
 
 
+def textures_de_lentree(indice):
+    """Rend (octets de TEX_DAT, indice de l'entree TEX, descripteurs).
+
+    **L'appariement MDL[i] <-> TEX[i] n'est vrai que pour les entrees 0 a 15.**
+    Au-dela il est faux : MDL[16] et MDL[17] pavent TEX[17] ou TEX[18], jamais
+    TEX[16]. La seule preuve disponible est le **pavage exact** -- la somme des
+    tailles stockees d'un tableau de descripteurs vaut la taille de son entree
+    TEX a l'octet pres, sans trou ni recouvrement.
+
+    Piege paye : les commandes de ce script appariaient par indice, et
+    rendaient donc des planches fausses au-dela de l'entree 15.
+
+    Rend (None, None, []) si aucune entree ne correspond -- une entree dont le
+    tableau vit dans le binaire et non dans le modele, par exemple : voir
+    `banques()`.
+    """
+    tex, _ = afs("TEX_DAT.AFS")
+    k, liste = _appariement().get(indice, (None, []))
+    return (tex, k, liste) if k is not None else (None, None, liste)
+
+
+def _descripteurs_de(indice):
+    """(offset du tableau, descripteurs) d'une entree de MDL_DAT."""
+    mdl, me = afs("MDL_DAT.AFS")
+    _, te = afs("TEX_DAT.AFS")
+    if not 0 <= indice < len(me):
+        return 0, []
+    mo, ms = me[indice]
+    if ms == 0:
+        return 0, []
+    plafond = max(s for _, s in te)
+    return descripteurs(mdl[mo:mo + ms], plafond)
+
+
+_cache_appariement = None
+
+
+def _appariement():
+    """Associe chaque entree MDL a son entree TEX, globalement et une fois.
+
+    Plusieurs entrees de TEX_DAT partagent la meme taille -- les deux couleurs
+    d'un meme costume, par exemple. Chercher « la premiere entree de cette
+    taille » rendait donc toujours la meme pour les deux, et les planches de la
+    seconde montraient le contenu de la premiere. On apparie globalement : les
+    entrees MDL sont parcourues dans l'ordre, et chacune prend la premiere
+    entree TEX **encore libre** de la bonne taille.
+    """
+    global _cache_appariement
+    if _cache_appariement is not None:
+        return _cache_appariement
+    _, me = afs("MDL_DAT.AFS")
+    _, te = afs("TEX_DAT.AFS")
+    libres = {}
+    for k, (o, s) in enumerate(te):
+        libres.setdefault(s, []).append(k)
+    table = {}
+    for i in range(len(me)):
+        _, liste = _descripteurs_de(i)
+        if not liste:
+            table[i] = (None, [])
+            continue
+        total = sum(taille_stockee(d["w"], d["h"], d["stockage"]) for d in liste)
+        dispo = libres.get(total)
+        table[i] = (dispo.pop(0) if dispo else None, liste)
+    _cache_appariement = table
+    return table
+
+
 def cmd_planche(premier, dernier):
     mdl, me = afs("MDL_DAT.AFS")
     tex, te = afs("TEX_DAT.AFS")
     dossier = ICI / "textures_dc"
     dossier.mkdir(exist_ok=True)
-    for i in range(premier, min(dernier + 1, len(me), len(te))):
-        mo, ms = me[i]
-        to, ts = te[i]
-        if ms == 0 or ts == 0:
-            continue
-        off, liste = descripteurs(mdl[mo:mo + ms], ts)
+    for i in range(premier, min(dernier + 1, len(me))):
+        tex, k, liste = textures_de_lentree(i)
         if not liste:
             print(f"[{i:3}] aucun descripteur")
             continue
+        if k is None:
+            print(f"[{i:3}] {len(liste):>3} descripteurs, aucune entree TEX pavee exactement")
+            continue
+        to, ts = te[k]
         W, H, pix = planche(liste, tex, to)
-        s = dossier / f"planche_{i:03}.png"
+        s = dossier / f"planche_{i:03}_tex{k:03}.png"
         png(s, W, H, pix)
-        print(f"[{i:3}] {len(liste):>3} textures  {W}x{H}  -> {s.relative_to(ICI)}")
+        print(f"[{i:3}] <-> TEX[{k:3}]  {len(liste):>3} textures  {W}x{H}  "
+              f"-> {s.relative_to(ICI)}")
 
 
 def cmd_descripteurs(indice):
     mdl, me = afs("MDL_DAT.AFS")
-    tex, te = afs("TEX_DAT.AFS")
-    mo, ms = me[indice]
-    to, ts = te[indice]
-    off, liste = descripteurs(mdl[mo:mo + ms], ts)
-    print(f"MDL[{indice}] {ms} octets  <->  TEX[{indice}] {ts} octets")
+    _, te = afs("TEX_DAT.AFS")
+    ms = me[indice][1]
+    tex, k, liste = textures_de_lentree(indice)
+    if not liste:
+        raise SystemExit(f"MDL[{indice}] : aucun tableau de descripteurs")
+    if k is None:
+        raise SystemExit(f"MDL[{indice}] : {len(liste)} descripteurs, "
+                         "aucune entree TEX pavee exactement")
+    ts = te[k][1]
+    plafond = max(s for _, s in te)
+    off, _ = descripteurs(mdl[me[indice][0]:me[indice][0] + ms], plafond)
+    print(f"MDL[{indice}] {ms} octets  <->  TEX[{k}] {ts} octets")
     print(f"tableau de {len(liste)} descripteurs a l'offset {off:#x}\n")
     couvert = 0
     for k, d in enumerate(liste):
@@ -336,17 +412,16 @@ def cmd_descripteurs(indice):
 def cmd_png(premier, dernier, x_en_bas=False):
     mdl, me = afs("MDL_DAT.AFS")
     tex, te = afs("TEX_DAT.AFS")
-    for i in range(premier, min(dernier + 1, len(me), len(te))):
-        mo, ms = me[i]
-        to, ts = te[i]
-        if ms == 0 or ts == 0:
-            print(f"[{i:3}] entree vide")
-            continue
-        off, liste = descripteurs(mdl[mo:mo + ms], ts)
+    for i in range(premier, min(dernier + 1, len(me))):
+        tex, k, liste = textures_de_lentree(i)
         if not liste:
             print(f"[{i:3}] aucun descripteur")
             continue
-        dossier = ICI / "textures_dc" / f"{i:03}"
+        if k is None:
+            print(f"[{i:3}] aucune entree TEX pavee exactement")
+            continue
+        to, ts = te[k]
+        dossier = ICI / "textures_dc" / f"{i:03}_tex{k:03}"
         dossier.mkdir(parents=True, exist_ok=True)
         for k, d in enumerate(liste):
             n = taille_stockee(d["w"], d["h"], d["stockage"])

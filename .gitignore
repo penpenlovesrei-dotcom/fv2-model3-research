@@ -24,3 +24,7 @@ nuages/
 *.mtl
 textures_dc/
 geometrie_dc/
+
+# Sorties de decompilateur : le depot n'en contient aucune, seuls les
+# mecanismes sont decrits. Les scripts Ghidra, eux, sont versionnes.
+ghidra/*.txt
