@@ -86,6 +86,16 @@ public class FV2DCNommer extends GhidraScript {
         {"8C12AA38", "ADXT_StartAfs",
          "Nomme par E8101202, \"(ADXT_StartAfs)\", charge en 0x8C12AA7A.\n"
          + "(objet, ptid, flid) -> ADXF_GetFileRange puis lecture dans l'objet."},
+        {"8C02A2A0", "fv2_scene_creneau_installer",
+         "(creneau, descripteur, pointeur). Le creneau indexe plusieurs tableaux\n"
+         + "paralleles (0x8C188850, 0x8C188878, 0x8C0E4A88, 0x8C18897C, 0x8C188990)\n"
+         + "et un enregistrement de 0x34 octets, ou le descripteur est recopie.\n"
+         + "Vingt-cinq appelants, TOUS en COMPUTED_CALL -- c'est ce qui rendait\n"
+         + "cette chaine invisible avant que les litteraux soient types."},
+        {"8C02A39E", "fv2_scene_creneau_charger",
+         "Pose le drapeau [0x8C18897C + creneau*4] = 1, appelle 0x8C02985E avec\n"
+         + "creneau+5, puis fv2_modele_et_textures_charger. Le +5 est le meme\n"
+         + "decalage que les `add #-5` du repartiteur de ressource."},
     };
 
     /** adresse, nom, type ou "" , commentaire */
@@ -120,6 +130,41 @@ public class FV2DCNommer extends GhidraScript {
          + "son empreinte memoire en +0x04 et son nombre de fichiers en +0x0C."},
         {"8C34F278", "fv2_bgm_index_courant", "",
          "L'index lu puis indexe dans fv2_table_bgm en 0x8C050904."},
+        {"8C118294", "fv2_table_ressources_de_scene", "",
+         "LA TABLE QUI MANQUAIT. 35 enregistrements de 0x34 octets.\n"
+         + "\n"
+         + "  +0x00 u32  indice d'entree dans mdl_dat.afs\n"
+         + "  +0x04 u32  indice d'entree dans tex_dat.afs\n"
+         + "  +0x08 u32  une taille\n"
+         + "  +0x0C      pointeur (zone 0x8C112xxx)\n"
+         + "  +0x10      pointeur (zone 0x8C112xxx)\n"
+         + "  +0x30 u32  0xFFFFFFFF, ou 0xFFFF00xx pour les 13 premiers\n"
+         + "\n"
+         + "Le rang est l'index de la table de decors (0x8C11763C) :\n"
+         + "  0-12   les 13 decors reels\n"
+         + "  13-18  FINISH00 a FINISH05, soit MDL 28 a 33, consecutifs\n"
+         + "  19-26  les sept ADV_* et SELECT\n"
+         + "  27-34  huit scenes au-dela de la table de decors\n"
+         + "\n"
+         + "Atteinte uniquement par adresse calculee, et l'index arrive dans une\n"
+         + "variable en RAM (0x8C1F56CF pour le chemin de 0x8C034D1C).\n"
+         + "\n"
+         + "RECOUPEMENT. Neuf decors avaient ete apparies independamment, par\n"
+         + "signature de texture dumpee d'emulateur (decor_vers_entree.py). Sept\n"
+         + "tombent sur la diagonale rang = index du decor. Et sur les 26 paires\n"
+         + "MDL<->TEX que l'appariement par pavage exact couvrait, la table n'en\n"
+         + "contredit AUCUNE.\n"
+         + "\n"
+         + "Seul desaccord : une image du releve « The Great B.M » tombe a l'ecart\n"
+         + "0,0 sur MDL 33, que la table place en FINISH05. GREAT_BM est le rang 4,\n"
+         + "donc MDL 35. L'image vient probablement de la scene de fin -- une seule\n"
+         + "ne tranche pas."},
+        {"8C047D1E", "fv2_genre_A9_effets", "word",
+         "0x00A9. Compare au bas octet de l'identifiant par le repartiteur."},
+        {"8C047D20", "fv2_genre_FF", "word",
+         "0x00FF. Branche a cas ecrits a la main, un par index."},
+        {"8C047D22", "fv2_genre_F0_musique", "word",
+         "0x00F0. Partition 4, adx_dat.afs."},
     };
 
     private int poses = 0;
@@ -154,6 +199,10 @@ public class FV2DCNommer extends GhidraScript {
             try {
                 if (type.equals("string")) {
                     createAsciiString(a);
+                } else if (type.equals("word")) {
+                    createWord(a);
+                } else if (type.equals("dword")) {
+                    createDWord(a);
                 }
             } catch (Exception e) {
                 println("  (type non pose en " + hex + " : " + e.getMessage() + ")");

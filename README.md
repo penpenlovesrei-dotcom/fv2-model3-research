@@ -484,7 +484,7 @@ Sega a aussi laissé le vidage de debug de la table : la chaîne de format
 `"%2d:%d %08X %08X %4d [%s]\n"` à `0x8C0CD544`, chargée par l'instruction à
 `0x8C02BA9A`, avec `"File Open Error"` juste au-dessus.
 
-### Quelle entree porte quel decor
+### Quelle entrée porte quel décor, mesuré avant de le lire
 
 Le code ne le dit pas, alors on l'a mesure. `retrouver.py` retrouve une texture
 dumpee d'emulateur parmi les 3 709 du disque par signature ; une seule texture
@@ -529,14 +529,94 @@ Tower, Secret Chemical Plant, The Skies of Armstone. Les trois premiers n'ont
 pas de texture Dreamcast dans le relevé, le quatrieme en a treize qui ne sont
 pas sur ce disque : ce sont des textures de la version arcade.
 
+### La table qui manquait : `0x8C118294`
+
+Elle est dans le code, et elle donne la reponse en clair. **35 enregistrements
+de `0x34` octets**, juste apres la table de decors :
+
+| champ | contenu |
+|---|---|
+| `+0x00` u32 | indice d'entrée dans `mdl_dat.afs` |
+| `+0x04` u32 | indice d'entrée dans `tex_dat.afs` |
+| `+0x08` u32 | une taille |
+| `+0x0C`, `+0x10` | deux pointeurs, zone `0x8C112xxx` |
+| `+0x30` u32 | `0xFFFFFFFF`, ou `0xFFFF00xx` pour les treize premiers |
+
+Le rang est l'index de la table de décors, et les blocs se lisent :
+
+- **0 à 12** : les treize décors réels
+- **13 à 18** : `FINISH00` à `FINISH05`, soit MDL 28 à 33, consécutifs
+- **19 à 26** : les sept `ADV_*` et `SELECT` — les paires `_2` tombent bien par deux
+- **27 à 34** : huit scènes au-delà de la table de décors
+
+| rang | nom interne | MDL | TEX |
+|---|---|---|---|
+| 0 | `TEST` | **75** | 112 |
+| 1 | `WESTERN` | **76** | 113 |
+| 2 | `AC_CARRIER` | **0** | 0 |
+| 3 | `ROOM_00` | **60** | 89 |
+| 4 | `GREAT_BM` | **35** | 58 |
+| 5 | `FURNACE` | **34** | 56 |
+| 6 | `STORE` | **68** | 100 |
+| 7 | `HANGAR` | **39** | 62 |
+| 8 | `CAPSULE` | **22** | 23 |
+| 9 | `DAM` | **26** | 33 |
+| 10 | `TOWER` | **74** | 111 |
+| 11 | `BUILDING` | **19** | 20 |
+| 12 | `MUSEUM` | **55** | 78 |
+
+### Pourquoi elle etait invisible, et ce qui l'a rendue visible
+
+La table n'est atteinte que par adresse calculée, et l'index arrive dans une
+variable en RAM. Les vingt-cinq références à l'installateur de créneau
+(`0x8C02A2A0`) sont **toutes** des `COMPUTED_CALL`. Ghidra ne pouvait donc pas
+les montrer tant que les littéraux n'étaient pas typés : c'est en posant les
+noms établis par le balayage d'octets que le graphe s'est refermé et que les
+appels ont apparu.
+
+L'enchaînement se lit alors d'un coup. Le chargeur de créneau
+(`0x8C02A39E`) fait trois choses et rien d'autre : il pose un drapeau dans un
+tableau de mots indexé par le créneau, appelle `0x8C02985E` avec le créneau
+**plus cinq** — le même décalage que les `add #-5` du répartiteur de ressource
+— puis passe la main au chargeur de modèle. Et son appelant lui donne
+`base + index * 0x34`, où `base` est cette table.
+
+### Les deux mesures se recoupent
+
+Les neuf décors avaient été appariés **avant**, par signature de texture, sans
+toucher au code. Sept tombent exactement sur la diagonale rang = index du
+décor : `TEST` 75/112, `WESTERN` 76/113, `AC_CARRIER` 0/0, `FURNACE` 34/56,
+`HANGAR` 39/62, `DAM` 26/33, `MUSEUM` 55/78.
+
+Et sur les **26 paires MDL ↔ TEX** que l'appariement par pavage exact couvrait,
+la table du jeu n'en contredit **aucune**. L'heuristique de pavage est donc
+validée sur tout son domaine.
+
+Deux corrections, toutes les deux de mon côté :
+
+- Serpent's Cage est `STORE`, pas `CAPSULE` — c'était une lecture de nom, pas
+  une mesure, et elle était fausse.
+- Mon résultat le plus faible, une seule image pour The Great B.M, donnait
+  MDL 33. La table place MDL 33 en `FINISH05` et `GREAT_BM` au rang 4, donc
+  MDL 35. L'image tombe pourtant à l'écart 0,0 sur MDL 33, la suivante à 205 :
+  ce n'est pas une égalité mal tranchée, la texture vit vraiment là. Elle vient
+  donc probablement de la scène de fin et pas du décor — mais avec une seule
+  image, ça ne se tranche pas.
+
+**La leçon.** La mesure a trouvé la réponse la première, et le code l'a
+confirmée puis corrigée là où la mesure était la plus mince. Aucune des deux
+n'aurait suffi : neuf voix de texture ne donnent pas la structure de la table,
+et la table seule ne dit pas lequel de ses rangs est quel décor visible.
+
 ### Ce qui reste inconnu
 
-**Comment un décor désigne sa géométrie.** La liste de `+0x08` est audio de
-bout en bout, donc la réponse est dans un autre champ ou dans du code atteint
-par adresse calculée. Neuf décors sur treize sont désormais appariés à leur
-entrée — mais **par la mesure des textures**, pas par la lecture du code. Le
-chargeur de modèle (`0x8C02A5A8`) reçoit un index sur un octet dont on ne sait
-toujours pas d'où il vient.
+**Ce que porte le champ `+0x08` de la table de ressources de scène**, et à quoi
+servent ses deux pointeurs vers la zone `0x8C112xxx`. La taille ne correspond
+ni à celle de l'entrée MDL ni à celle de l'entrée TEX.
+
+**Qui écrit l'index de scène** en RAM (`0x8C1F56CF` sur le chemin de
+`0x8C034D1C`). L'appariement décor → entrée est établi, mais le pas d'avant —
+ce qui décide du rang — ne l'est pas.
 
 ### Trois leçons de méthode
 

@@ -467,7 +467,7 @@ Sega also left the table's debug dump in: the format string
 `"%2d:%d %08X %08X %4d [%s]\n"` at `0x8C0CD544`, loaded by the instruction at
 `0x8C02BA9A`, with `"File Open Error"` just above it.
 
-### Which entry holds which stage
+### Which entry holds which stage, measured before it was read
 
 The code doesn't say, so it was measured. `retrouver.py` finds one emulator-
 dumped texture among the disc's 3,709 by signature; a single texture doesn't
@@ -511,13 +511,91 @@ Secret Chemical Plant, The Skies of Armstone. The first three have no Dreamcast
 texture in the dump; the fourth has thirteen that are not on this disc: they are
 arcade-version textures.
 
+### The table that was missing: `0x8C118294`
+
+It is in the code, and it gives the answer in plain sight. **35 records of
+`0x34` bytes**, right after the stage table:
+
+| field | content |
+|---|---|
+| `+0x00` u32 | entry index into `mdl_dat.afs` |
+| `+0x04` u32 | entry index into `tex_dat.afs` |
+| `+0x08` u32 | a size |
+| `+0x0C`, `+0x10` | two pointers, `0x8C112xxx` area |
+| `+0x30` u32 | `0xFFFFFFFF`, or `0xFFFF00xx` for the first thirteen |
+
+The rank is the stage table's index, and the blocks read:
+
+- **0 to 12**: the thirteen real stages
+- **13 to 18**: `FINISH00` to `FINISH05`, i.e. MDL 28 to 33, consecutive
+- **19 to 26**: the seven `ADV_*` and `SELECT` — the `_2` pairs do fall in twos
+- **27 to 34**: eight scenes beyond the stage table
+
+| rank | internal name | MDL | TEX |
+|---|---|---|---|
+| 0 | `TEST` | **75** | 112 |
+| 1 | `WESTERN` | **76** | 113 |
+| 2 | `AC_CARRIER` | **0** | 0 |
+| 3 | `ROOM_00` | **60** | 89 |
+| 4 | `GREAT_BM` | **35** | 58 |
+| 5 | `FURNACE` | **34** | 56 |
+| 6 | `STORE` | **68** | 100 |
+| 7 | `HANGAR` | **39** | 62 |
+| 8 | `CAPSULE` | **22** | 23 |
+| 9 | `DAM` | **26** | 33 |
+| 10 | `TOWER` | **74** | 111 |
+| 11 | `BUILDING` | **19** | 20 |
+| 12 | `MUSEUM` | **55** | 78 |
+
+### Why it was invisible, and what made it visible
+
+The table is reached only by computed address, and the index arrives in a RAM
+variable. All twenty-five references to the slot installer (`0x8C02A2A0`) are
+`COMPUTED_CALL`. Ghidra could not show them while the literals were untyped:
+applying the names the byte scan had established is what closed the graph and
+made the calls appear.
+
+The chain then reads at a glance. The slot loader (`0x8C02A39E`) does
+three things and nothing else: it sets a flag in a word array indexed by the
+slot, calls `0x8C02985E` with the slot **plus five** — the same offset as the
+resource dispatcher's `add #-5` — then hands over to the model loader. And its
+caller passes it `base + index * 0x34`, where `base` is this table.
+
+### The two measurements agree
+
+The nine stages had been paired **beforehand**, by texture signature, without
+touching the code. Seven land exactly on the diagonal rank = stage index:
+`TEST` 75/112, `WESTERN` 76/113, `AC_CARRIER` 0/0, `FURNACE` 34/56,
+`HANGAR` 39/62, `DAM` 26/33, `MUSEUM` 55/78.
+
+And of the **26 MDL ↔ TEX pairs** the exact-tiling pairing covered, the game's
+own table contradicts **none**. The tiling heuristic is therefore validated
+across its whole domain.
+
+Two corrections, both of them mine:
+
+- Serpent's Cage is `STORE`, not `CAPSULE` — that was a reading of names, not a
+  measurement, and it was wrong.
+- My weakest result, a single image for The Great B.M, gave MDL 33. The table
+  places MDL 33 at `FINISH05` and `GREAT_BM` at rank 4, so MDL 35. Yet the
+  image lands at distance 0.0 on MDL 33, the next candidate at 205: this is not
+  a badly broken tie, the texture really lives there. So it probably comes from
+  the ending scene rather than the stage — but one image does not settle it.
+
+**The lesson.** The measurement found the answer first, and the code then
+confirmed it and corrected it where the measurement was thinnest. Neither alone
+would have done: nine texture votes do not give the table's structure, and the
+table alone does not say which of its ranks is which visible stage.
+
 ### What is still unknown
 
-**How a stage names its geometry.** The `+0x08` list is audio from end to end,
-so the answer lies in another field or in code reached by computed address. Nine
-stages out of thirteen are now paired with their entry — but **by measuring
-textures**, not by reading code. The model loader (`0x8C02A5A8`) receives a
-one-byte index whose origin is still unknown.
+**What the scene resource table's `+0x08` field holds**, and what its two
+pointers into the `0x8C112xxx` area are for. The size matches neither the MDL
+entry's nor the TEX entry's.
+
+**Who writes the scene index** in RAM (`0x8C1F56CF` on the `0x8C034D1C` path).
+The stage → entry pairing is established, but the step before it — what decides
+the rank — is not.
 
 ### Three lessons in method
 
