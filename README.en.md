@@ -783,6 +783,108 @@ screens: the six `mov #3..8,R4` immediates in `0x8C019CBC` and the six in
 
 ---
 
+## The strip format, read exactly
+
+The point that blocked the export. The old reader got the header count right
+**96.8%** of the time, and the 3.2% of failures disordered the floor and left
+holes that had to be patched by hand. It is no longer a heuristic.
+
+### What a strip zone contains
+
+It starts at `+0x50` and its size is declared at `+0x4C`. You walk it element
+by element:
+
+| element | size | content |
+|---|---|---|
+| strip header | 8 | `(code, count)` |
+| vertex | 32 | position 3f, then `u` and `v` at `+0x18` and `+0x1C` |
+| **reference** | 8 | `(0x5F……, ………)` |
+
+**The header's count counts vertices AND references.** That is the whole
+misunderstanding: a strip declares 18 and stores only 16, because two of its
+elements are references.
+
+A reference is recognised by the **high byte `0x5F`** of its first word. The
+marker is safe: `0x5F000000` is 9.2·10¹⁸ as a float, and positions fit within
+±2000 — no vertex can be mistaken for a reference.
+
+Its target is read from the **low 24 bits of the second word**, as a signed
+integer, counted backwards from the **end** of the record:
+
+```
+target = reference_address + 8 + s24(second word)
+```
+
+and it lands on the start of a vertex already stored **anywhere in the part** —
+not only in the current strip.
+
+### The three proofs
+
+| constraint | result |
+|---|---|
+| exact tiling of the zones | **15,559 / 15,559** — 100.0% |
+| references resolved onto a stored vertex | **141,909 / 141,909** — 100.000% |
+| unit normals | 370,392 / 374,016 — 99.03% |
+
+Three independent constraints, across the archive's 77 usable entries. The
+0.97% of non-unit normals is not a defect: those are the ColType 1 parts, where
+the middle twelve bytes carry two colour words instead of a normal. Position
+and texture coordinates sit at the same offsets in both forms, so geometry
+reads uniformly.
+
+### What was wrong, and why the floor was disordered
+
+The old reader advanced 32 bytes per vertex, scanning forward in 4-byte steps
+for the next one. So it stepped **over the references**, and once its count was
+exhausted it went and took vertices from the **next** strip. Hence the bad
+joins.
+
+Two readings in these notes were wrong, and the tiling ruled them out:
+
+- The "gaps of 40 and 48 bytes between consecutive vertices, therefore
+  interleaved state words" are simply `32 + 8` and `32 + 16`: a vertex followed
+  by one or two references.
+- The "continued strip" hypothesis — bit 5 of the code, therefore count − 2 —
+  gains **nothing** on the tiling test: 76.9% with it and without it. It
+  accounted for the shortfall of 2 by coincidence, because many strips carry
+  exactly two references.
+
+### What it changes for the export
+
+`export_decor.py` reconstructs nothing any more. No 4-fold symmetry, no quadrant
+replication, no boundary-loop closing, no prototype rejection: those patches
+compensated for the missed strips. All thirteen stages come out with **every
+part tiled exactly**.
+
+| stage | MDL | parts | vertices | faces |
+|---|---|---|---|---|
+| TEST | 75 | 80 | 2,065 | 1,872 |
+| WESTERN | 76 | 369 | 4,202 | 3,116 |
+| AC_CARRIER | 0 | 318 | 4,563 | 3,347 |
+| ROOM_00 | 60 | 58 | 1,979 | 1,119 |
+| GREAT_BM | 35 | 152 | 2,887 | 2,467 |
+| FURNACE | 34 | 293 | 4,911 | 2,980 |
+| STORE | 68 | 221 | 3,962 | 2,537 |
+| HANGAR | 39 | 513 | 4,722 | 3,076 |
+| CAPSULE | 22 | 584 | 4,970 | 2,865 |
+| DAM | 26 | 202 | 5,784 | 3,640 |
+| TOWER | 74 | 340 | 5,090 | 2,768 |
+| BUILDING | 19 | 354 | 6,355 | 3,468 |
+| MUSEUM | 55 | 338 | 4,814 | 3,407 |
+
+### What is still unknown
+
+**A reference's first word.** Its high byte is always `0x5F` and its low 24
+bits are a multiple of 64, but no offset convention makes them land on a vertex
+— 23% at best, against 100% for the second word. It plays no part in geometry.
+
+**How parts are grouped.** They do not chain by zone size: a chain stops after
+six parts on average, so there is a grouping structure above them that has not
+been established. The pattern scan stays safe — the 15,559 parts it finds all
+tile their zone to the byte, which a false positive would not.
+
+---
+
 ## Tools
 
 Python scripts, no dependencies, for Windows.
@@ -814,6 +916,8 @@ Python scripts, no dependencies, for Windows.
 | `desas_sh4.py` | SH-4 disassembler: reads an address without requiring it to be proven code |
 | `tables_sh4.py` | four discoverers — who loads a literal, who branches here, the `BRAF` tables, and the call graph walked upward |
 | `decor_vers_entree.py` | make a dump folder vote to find a stage's MDL entry |
+| `rubans_dc.py` | the strip format, read exactly — header, vertex, reference |
+| `export_decor.py` | export a stage to OBJ + MTL + textures, reconstructing nothing |
 | `gdb_flycast.py` | remote GDB client for Flycast, standard library only |
 
 Five `.cmd` launchers chain what is needed, with no command line to retype:

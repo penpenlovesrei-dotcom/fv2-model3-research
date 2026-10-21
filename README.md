@@ -807,6 +807,110 @@ n'en reste aucune trace exécutable. Douze octets séparent les deux
 
 ---
 
+## Le format de ruban, lu exactement
+
+Le point qui bloquait l'export. L'ancien lecteur lisait le compte de l'en-tete
+juste a **96,8 %**, et les 3,2 % d'echecs desordonnaient le sol et laissaient
+des trous qu'il fallait reboucher a la main. Ce n'est plus une heuristique.
+
+### Ce que contient une zone de rubans
+
+Elle commence en `+0x50` et sa taille est annoncee en `+0x4C`. On y marche
+d'element en element :
+
+| element | taille | contenu |
+|---|---|---|
+| en-tête de ruban | 8 | `(code, compte)` |
+| sommet | 32 | position 3f, puis `u` et `v` en `+0x18` et `+0x1C` |
+| **renvoi** | 8 | `(0x5F……, ………)` |
+
+**Le compte de l'en-tête compte les sommets ET les renvois.** C'est tout le
+malentendu : un ruban annonce 18 et n'en stocke que 16, parce que deux de ses
+éléments sont des renvois.
+
+Le renvoi se reconnaît au **haut octet `0x5F`** de son premier mot. Le
+marqueur est sûr : `0x5F000000` vaut 9,2·10¹⁸ en flottant, et les positions
+tiennent dans ±2000 — aucun sommet ne peut être pris pour un renvoi.
+
+Sa cible se lit dans les **24 bits de poids faible du second mot**, en entier
+signé, comptés à reculons depuis la **fin** de l'enregistrement :
+
+```
+cible = adresse_du_renvoi + 8 + s24(second mot)
+```
+
+et elle tombe sur le début d'un sommet déjà stocké **n'importe où dans la
+partie** — pas seulement dans le ruban courant.
+
+### Les trois preuves
+
+| contrainte | résultat |
+|---|---|
+| pavage exact des zones | **15 559 / 15 559** — 100,0 % |
+| renvois résolus sur un sommet stocké | **141 909 / 141 909** — 100,000 % |
+| normales unitaires | 370 392 / 374 016 — 99,03 % |
+
+Trois contraintes indépendantes, sur les 77 entrées utiles de l'archive. Le
+0,97 % de normales non unitaires n'est pas un défaut : ce sont les parties à
+ColType 1, où les douze octets du milieu portent deux mots de couleur au lieu
+d'une normale. Position et coordonnées de texture sont aux mêmes offsets dans
+les deux formes, donc la géométrie se lit uniformément.
+
+### Ce qui était faux, et pourquoi le sol se désordonnait
+
+L'ancien lecteur avançait de 32 octets par sommet en balayant par mots de 4
+jusqu'au suivant. Il sautait donc **par-dessus les renvois**, et arrivé au bout
+de son compte il allait prendre des sommets du ruban **suivant**. D'où les
+mauvais raccordements.
+
+Deux lectures de ces notes étaient fausses, et le pavage les a écartées :
+
+- Les « écarts de 40 et 48 octets entre sommets consécutifs, donc des mots
+  d'état intercalés » sont simplement `32 + 8` et `32 + 16` : un sommet suivi
+  d'un ou deux renvois.
+- L'hypothèse du « ruban continué » — bit 5 du code, donc compte − 2 — ne
+  gagne **rien** au test du pavage : 76,9 % avec elle comme sans elle. Elle
+  rendait compte de l'écart de 2 par coïncidence, parce que beaucoup de rubans
+  portent exactement deux renvois.
+
+### Ce que ça change pour l'export
+
+`export_decor.py` ne reconstitue plus rien. Ni symétrie d'ordre 4, ni
+réplication de quart, ni fermeture de boucles d'arêtes, ni rejet de
+prototypes : ces rustines compensaient les rubans ratés. Les treize décors
+sortent avec **toutes leurs parties pavées exactement**.
+
+| décor | MDL | parties | sommets | faces |
+|---|---|---|---|---|
+| TEST | 75 | 80 | 2 065 | 1 872 |
+| WESTERN | 76 | 369 | 4 202 | 3 116 |
+| AC_CARRIER | 0 | 318 | 4 563 | 3 347 |
+| ROOM_00 | 60 | 58 | 1 979 | 1 119 |
+| GREAT_BM | 35 | 152 | 2 887 | 2 467 |
+| FURNACE | 34 | 293 | 4 911 | 2 980 |
+| STORE | 68 | 221 | 3 962 | 2 537 |
+| HANGAR | 39 | 513 | 4 722 | 3 076 |
+| CAPSULE | 22 | 584 | 4 970 | 2 865 |
+| DAM | 26 | 202 | 5 784 | 3 640 |
+| TOWER | 74 | 340 | 5 090 | 2 768 |
+| BUILDING | 19 | 354 | 6 355 | 3 468 |
+| MUSEUM | 55 | 338 | 4 814 | 3 407 |
+
+### Ce qui reste inconnu
+
+**Le premier mot d'un renvoi.** Son haut octet vaut toujours `0x5F` et ses
+24 bits de poids faible sont un multiple de 64, mais aucune convention
+d'offset ne les fait tomber sur un sommet — 23 % au mieux, contre 100 % pour
+le second mot. Il ne sert pas à la géométrie.
+
+**Le groupement des parties.** Elles ne s'enchaînent pas par la taille de
+zone : une chaîne s'arrête après six parties en moyenne, donc il existe une
+structure de groupe au-dessus qu'on n'a pas établie. Le balayage par motif
+reste sûr — les 15 559 parties qu'il trouve pavent toutes leur zone à l'octet
+près, ce qu'un faux positif ne ferait pas.
+
+---
+
 ## Les outils
 
 Scripts Python, sans dépendance, pour Windows.
@@ -838,6 +942,8 @@ Scripts Python, sans dépendance, pour Windows.
 | `desas_sh4.py` | désassembleur SH-4 : lit une adresse sans demander que ce soit du code |
 | `tables_sh4.py` | quatre découvreurs — qui charge un littéral, qui saute ici, les tables de `BRAF`, et le graphe d'appels remonté |
 | `decor_vers_entree.py` | fait voter un dossier de dump pour trouver l'entrée MDL d'un décor |
+| `rubans_dc.py` | le format de ruban, lu exactement — en-tête, sommet, renvoi |
+| `export_decor.py` | sort un décor en OBJ + MTL + textures, sans rien reconstituer |
 | `gdb_flycast.py` | client GDB distant pour Flycast, en bibliothèque standard |
 
 Cinq lanceurs `.cmd` enchaînent ce qu'il faut, sans ligne à recopier :
