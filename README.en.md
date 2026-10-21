@@ -467,13 +467,57 @@ Sega also left the table's debug dump in: the format string
 `"%2d:%d %08X %08X %4d [%s]\n"` at `0x8C0CD544`, loaded by the instruction at
 `0x8C02BA9A`, with `"File Open Error"` just above it.
 
+### Which entry holds which stage
+
+The code doesn't say, so it was measured. `retrouver.py` finds one emulator-
+dumped texture among the disc's 3,709 by signature; a single texture doesn't
+settle it, because a sky or a floor serves several stages and lands at distance
+0.0 in two entries. So `decor_vers_entree.py` makes **a whole dump folder
+vote**: each image votes for every source where it is found at the minimum
+distance, and the entry that holds the stage takes the votes.
+
+| dump | MDL entry | TEX entry | votes | likely internal name |
+|---|---|---|---|---|
+| Great Museum | **55** | 78 | 50 / 50 | `MUSEUM` |
+| Serpent's Cage | **68** | 100 | 19 / 19 | `CAPSULE` |
+| Hanger of the Dark Royal | **39** | 62 | 17 / 17 | `HANGAR` |
+| Training Zone | **75** | 112 | 7 / 7 | `TEST` |
+| Deck of the Dark Royal | **0** | 0 | 7 / 7 | `AC_CARRIER` |
+| Terror Furnace | **34** | 56 | 3 / 3 | `FURNACE` |
+| Cross River Damsite | **26** | 33 | 2 against 1 | `DAM` |
+| The Great B.M | **33** | 55 | 1 | `GREAT_BM` |
+| Old Armstone Town | **76** | 113 | 1 | `WESTERN` |
+
+The first five rows are unanimous with no rival. The training stage comes out at
+MDL 75 / TEX 112 **independently** of the first measurement, which took another
+route: that is what validates the method. The last three rows rest on one or two
+images — plausible, not established.
+
+The "internal name" column is a reading, not a measurement: the binary carries
+only the internal names (`0x8C0DD1D4`, twelve bytes per slot, in the stage
+table's order), and the display names are textures.
+
+**So the stages are not entries 0 to 15**, as I had assumed. They are scattered:
+0, 26, 33, 34, 39, 55, 68, 75, 76.
+
+An independent cross-check: an MDL entry's header carries its class at `+0x00`,
+`1` for a stage and `-1` for a character. Of the 77 usable entries, 43 are of
+stage class and 34 of character class — and **all nine entries found above are
+of stage class**, without exception.
+
+Four stages are missing — `ROOM_00`, `STORE`, `TOWER`, `BUILDING` — and exactly
+four dumps are left without a match: Marble Arena, Neo Armstone City Tower,
+Secret Chemical Plant, The Skies of Armstone. The first three have no Dreamcast
+texture in the dump; the fourth has thirteen that are not on this disc: they are
+arcade-version textures.
+
 ### What is still unknown
 
 **How a stage names its geometry.** The `+0x08` list is audio from end to end,
-so the answer lies in another field or in code reached by computed address. The
-only known stage → entry pairing is the training stage's, and it was obtained by
-**measuring textures** (MDL 75 ↔ TEX 112, signatures recovered at distance 0.0),
-not by reading code.
+so the answer lies in another field or in code reached by computed address. Nine
+stages out of thirteen are now paired with their entry — but **by measuring
+textures**, not by reading code. The model loader (`0x8C02A5A8`) receives a
+one-byte index whose origin is still unknown.
 
 ### Three lessons in method
 
@@ -524,6 +568,7 @@ Python scripts, no dependencies, for Windows.
 | `planche_dc.py` | contact sheet of every texture in one entry |
 | `desas_sh4.py` | SH-4 disassembler: reads an address without requiring it to be proven code |
 | `tables_sh4.py` | four discoverers — who loads a literal, who branches here, the `BRAF` tables, and the call graph walked upward |
+| `decor_vers_entree.py` | make a dump folder vote to find a stage's MDL entry |
 | `gdb_flycast.py` | remote GDB client for Flycast, standard library only |
 
 Five `.cmd` launchers chain what is needed, with no command line to retype:

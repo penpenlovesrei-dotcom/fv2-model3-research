@@ -484,14 +484,59 @@ Sega a aussi laissé le vidage de debug de la table : la chaîne de format
 `"%2d:%d %08X %08X %4d [%s]\n"` à `0x8C0CD544`, chargée par l'instruction à
 `0x8C02BA9A`, avec `"File Open Error"` juste au-dessus.
 
+### Quelle entree porte quel decor
+
+Le code ne le dit pas, alors on l'a mesure. `retrouver.py` retrouve une texture
+dumpee d'emulateur parmi les 3 709 du disque par signature ; une seule texture
+ne tranche pas, parce qu'un ciel ou un sol sert a plusieurs decors et tombe a
+l'ecart 0,0 dans deux entrees. `decor_vers_entree.py` fait donc **voter tout un
+dossier de dump** : chaque image vote pour chaque source ou elle se retrouve a
+l'ecart minimal, et l'entree qui porte le decor rafle les voix.
+
+| relevé | entrée MDL | entrée TEX | voix | nom interne probable |
+|---|---|---|---|---|
+| Great Museum | **55** | 78 | 50 / 50 | `MUSEUM` |
+| Serpent's Cage | **68** | 100 | 19 / 19 | `CAPSULE` |
+| Hanger of the Dark Royal | **39** | 62 | 17 / 17 | `HANGAR` |
+| Training Zone | **75** | 112 | 7 / 7 | `TEST` |
+| Deck of the Dark Royal | **0** | 0 | 7 / 7 | `AC_CARRIER` |
+| Terror Furnace | **34** | 56 | 3 / 3 | `FURNACE` |
+| Cross River Damsite | **26** | 33 | 2 contre 1 | `DAM` |
+| The Great B.M | **33** | 55 | 1 | `GREAT_BM` |
+| Old Armstone Town | **76** | 113 | 1 | `WESTERN` |
+
+Les cinq premieres lignes sont unanimes et sans concurrente. Le decor
+d'entrainement ressort a MDL 75 / TEX 112 **independamment** de la premiere
+mesure, qui avait pris un autre chemin : c'est ce qui valide la methode. Les
+trois dernieres lignes tiennent a une ou deux images -- plausibles, pas
+etablies.
+
+La colonne « nom interne » est une lecture, pas une mesure : le binaire ne
+porte que les noms internes (`0x8C0DD1D4`, douze octets par creneau, dans
+l'ordre de la table de decors), et les noms d'affichage sont des textures.
+
+**Les decors ne sont donc pas les entrees 0 a 15**, comme je l'avais suppose.
+Ils sont disperses : 0, 26, 33, 34, 39, 55, 68, 75, 76.
+
+Recoupement independant : l'en-tete d'une entree MDL porte en `+0x00` sa classe,
+`1` pour un decor et `-1` pour un personnage. Sur les 77 entrees utiles, 43 sont
+de classe decor et 34 de classe personnage -- et **les neuf entrees retrouvees
+ci-dessus sont toutes de classe decor**, sans exception.
+
+Quatre decors manquent -- `ROOM_00`, `STORE`, `TOWER`, `BUILDING` -- et il reste
+exactement quatre releves sans correspondance : Marble Arena, Neo Armstone City
+Tower, Secret Chemical Plant, The Skies of Armstone. Les trois premiers n'ont
+pas de texture Dreamcast dans le relevé, le quatrieme en a treize qui ne sont
+pas sur ce disque : ce sont des textures de la version arcade.
+
 ### Ce qui reste inconnu
 
 **Comment un décor désigne sa géométrie.** La liste de `+0x08` est audio de
 bout en bout, donc la réponse est dans un autre champ ou dans du code atteint
-par adresse calculée. Le seul appariement décor → entrée connu est celui du
-décor d'entraînement, et il a été obtenu par la **mesure des textures**
-(MDL 75 ↔ TEX 112, signatures retrouvées à l'écart 0,0), pas par la lecture du
-code.
+par adresse calculée. Neuf décors sur treize sont désormais appariés à leur
+entrée — mais **par la mesure des textures**, pas par la lecture du code. Le
+chargeur de modèle (`0x8C02A5A8`) reçoit un index sur un octet dont on ne sait
+toujours pas d'où il vient.
 
 ### Trois leçons de méthode
 
@@ -543,6 +588,7 @@ Scripts Python, sans dépendance, pour Windows.
 | `planche_dc.py` | planche contact de toutes les textures d'une entrée |
 | `desas_sh4.py` | désassembleur SH-4 : lit une adresse sans demander que ce soit du code |
 | `tables_sh4.py` | quatre découvreurs — qui charge un littéral, qui saute ici, les tables de `BRAF`, et le graphe d'appels remonté |
+| `decor_vers_entree.py` | fait voter un dossier de dump pour trouver l'entrée MDL d'un décor |
 | `gdb_flycast.py` | client GDB distant pour Flycast, en bibliothèque standard |
 
 Cinq lanceurs `.cmd` enchaînent ce qu'il faut, sans ligne à recopier :

@@ -186,6 +186,32 @@ def cmd_charge(args):
 
 # ------------------------------------------------ decouvreurs de dispatch
 
+def argument(img, jsr, reg=4, fenetre=40):
+    """La valeur passee dans `reg` a un `jsr`/`jmp`.
+
+    **Le creneau de delai est prioritaire.** L'instruction qui SUIT un saut
+    SH-4 s'execute avant que le saut prenne effet, et c'est tres souvent la
+    que le compilateur pose le dernier argument. Un balayage qui ne regarde
+    qu'en arriere rend donc une valeur plausible et fausse -- ici il rendait
+    un pointeur de remplissage de boucle la ou le code passe `3`.
+    """
+    h = img.demi(jsr + 2)
+    if h is not None:
+        mn, ch = decode(h, jsr + 2)
+        if mn and ch.get("n") == reg:
+            return jsr + 2, mn, ch, "delai"
+    for k in range(1, fenetre):
+        p = jsr - 2 * k
+        h = img.demi(p)
+        if h is None:
+            break
+        mn, ch = decode(h, p)
+        if mn in ("mov#", "mov", "mov.l@pc", "mov.w@pc", "extu.b", "extu.w") \
+                and ch.get("n") == reg:
+            return p, mn, ch, "avant"
+    return None, None, {}, None
+
+
 def remonte_source(img, a, reg, fenetre=40):
     """Qui a ecrit `reg` juste avant `a` ? Suit les copies MOV et EXTU."""
     chaine = [reg]
@@ -405,6 +431,15 @@ if __name__ == "__main__":
         cmd_appels(reste)
     elif quoi == "braf":
         cmd_braf(reste)
+    elif quoi == "argument":
+        img = Image()
+        a = int(reste[0], 0)
+        reg = int(reste[1], 0) if len(reste) > 1 else 4
+        p, mn, ch, ou = argument(img, a, reg)
+        if p is None:
+            print(f"aucune ecriture de r{reg} trouvee avant {a:#010x}")
+        else:
+            print(f"r{reg} <- {p:#010x}  {mn}  {ch}   ({ou})")
     elif quoi == "mots16":
         cmd_mots16(reste)
     else:
