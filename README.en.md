@@ -19,6 +19,7 @@ databases, nor in the Dreamcast guides.
 - [Playing in English](#playing-in-english)
 - [Survival mode](#survival-mode)
 - [The stage table and the training stage](#the-stage-table-and-the-training-stage)
+- [Resolving resource identifiers](#resolving-resource-identifiers)
 - [Tools](#tools)
 - [Open questions](#open-questions)
 - [Scope and limits](#scope-and-limits)
@@ -322,12 +323,13 @@ The `0x1F8`-byte block at `+0x20` holds a family of normalised plane triplets
 
 ### The field that decides: `+0x08`
 
-The list of 8 identifiers it points at has the stage's **own geometry** as its
-fourth entry. That is where — and only where — the two versions diverge:
+The list of 8 identifiers it points to is **entirely audio**. Its fourth slot
+carries the stage's **music**, and that is the one and only place the two
+versions diverge:
 
 | stage | arcade | Dreamcast |
 |---|---|---|
-| **TEST** | **`0x00000000` — empty** | **`0x001800F0` — index 0x18** |
+| **TEST** | **`0x00000000` — empty** | **`0x001800F0` — index 24** |
 | WESTERN | `0x00A01001` | `0x000100F0` |
 | FURNACE | `0x00A01002` | `0x000200F0` |
 | AC_CARRIER | `0x00A01003` | `0x000300F0` |
@@ -341,39 +343,154 @@ fourth entry. That is where — and only where — the two versions diverge:
 | TOWER | `0x00A01010` | `0x001000F0` |
 | GREAT_BM | `0x00A01012` | `0x001200F0` |
 
-The twelve fighting stages carry the same index on both sides. The kinds map
-one to one: arcade `0xA0/0x10` ↔ Dreamcast `0x00F0` (stage geometry),
-`0xA0/0x2E` ↔ `0x03A9`, `0xA0/0x2F` ↔ `0x04A9`, `0xA1/0x0B` ↔ `0x00FF`.
+The twelve fight stages carry the same index on both sides. The genre's full
+enumeration is in plain sight in both images:
 
-And the full enumeration of the stage-geometry kind reads in the clear in both
-images:
+- arcade `0x000EC048`: `00A01000` … `00A01013`, **20 slots (0–19)**
+- Dreamcast `0x00102420`: `000000F0` … `001800F0`, **25 slots (0–24)**
 
-- arcade `0x000EC048`: `00A01000` … `00A01013`, **20 slots (0x00–0x13)**
-- Dreamcast `0x00102420`: `000000F0` … `001800F0`, **25 slots (0x00–0x18)**
+So the Dreamcast **added five tracks**, and `TEST` points at the last of the
+five. The list's first three slots are identical across all 27 records — shared
+effect banks — and slots 4 and 5 are a stage-specific effect pair, null for
+`TEST`.
 
-**`TEST` is the training stage, and its geometry exists only on Dreamcast.**
-The console added slots 0x14 to 0x18 and pointed `TEST` at the last of the five
-— the signature of a late addition, consistent with the rest of what exists
-only on console (`EMI` at index 11 in place of `TECHNO` and `DURAL`, Kuhn's
-unlock completed).
+**`TEST` is the training stage, and it exists only on Dreamcast.** Consistent
+with everything else that is console-only: `EMI` at index 11 in place of
+`TECHNO` and `DURAL`, Kuhn's unlock completed.
 
-The arcade carries **everything else** about the stage: its name, the whole
-record, its camera parameters, its own fog colour, its `0x1F8` block. Only the
-geometry resource is missing. And its own kind has eight enumerated, unused
-slots — 0, 6, 7, 8, 9, 0xF, 0x11, 0x13.
+The arcade carries **everything else** about the stage: its name, its whole
+record, its camera parameters, its fog colour, its `0x1F8` block.
 
-### Two lessons in method
+---
 
-**A name table says nothing about content.** Both versions' name lists are
-identical name for name, which at first led to the conclusion that no stage was
-exclusive. That is wrong: a name list enumerates the slots that were
-*planned*, filled or empty. Each record has to be followed through to its
-payload.
+## Resolving resource identifiers
 
-**Resource identifiers are not addresses.** The `0x00A0xxxx` values, walked as
-Real3D models with `model3d.py`, fail at the very first polygon on the face
-normal's magnitude. They are `(kind, index)` identifiers, resolved by code that
-has not yet been found.
+The hard part of this project. Ghidra saw nothing: only 32.4% of the binary is
+disassembled, no function referenced these tables, and the stage table is
+pointed to by **no literal at all**. The answer came from a byte scan, which
+doesn't try to prove something is code — it just reads it.
+
+### The layout, and the mistake it cost
+
+A resource identifier reads as **three fields**, not two:
+
+```
+ 31                    16 15        8 7         0
++------------------------+-----------+-----------+
+|         index          | sub-genre |   genre   |
++------------------------+-----------+-----------+
+```
+
+The music enumeration is perfectly regular — `000000F0`, `000100F0`, …
+`001800F0` — which yields a very convincing 16/16 split that is **wrong**. It
+holds as long as the sub-genre is 0, and it collapses at `0x000803A9` and
+`0x000604A9`: those are not two neighbouring genres but **one**, `0xA9`, with
+sub-genres 3 and 4.
+
+What settles it is not the table's regularity. It's the dispatcher.
+
+### The dispatcher: `0x8C047C9E`
+
+One argument, the identifier. It extracts the low byte and compares:
+
+```
+extu.b r11,r0        ; r0 = id & 0xFF
+cmp/eq #0xA9   ->  0x8C047CCA
+cmp/eq #0xFF   ->  0x8C047D44
+cmp/eq #0xF0   ->  0x8C047E54
+else               0x8C047E68   (nothing)
+```
+
+Three genres, and only three.
+
+**Genre `0xF0` — music.** The branch does `shlr16` then `extu.b`: the index is
+indeed at the top. It reaches `0x8C0479E8`, which reserves 284,868 bytes, zeroes
+a volume float, and reads partition **4** — `adx_dat.afs`. All 13 indices used
+by the stage table are valid **CRI ADX** streams, 44,100 Hz stereo, with the
+`(c)CRI` marker in place. The training stage's, index 24, is the longest in the
+archive: 11.97 MB.
+
+**Genre `0xA9` — sound effects.** Mask `0x0000FF00` then `shlr8`: it's the
+sub-genre that is used. The branch reaches `0x8C0C1D20`, which writes the
+identifier into a ring from `0xA0800400` to `0xA0800500`, wrapping back to the
+start. That is **AICA** RAM over the G2 bus — a command queue to the sound
+processor.
+
+**Genre `0xFF`.** A chain of `cmp/eq` on `id & 0x00FF00FF`, written by hand,
+one case per index.
+
+### The file system is CRI's
+
+The five archives are **ADXF partitions** — CRI's file system. "AFS" stands for
+*ADX File System*. The library leaves its function names in its error messages,
+which names the whole layer at once:
+
+| | |
+|---|---|
+| `ADXF_LoadPartition` | `0x8C12BA6A` |
+| `ADXF_Open` | `0x8C12BE4E` |
+| `ADXF_GetFileRange` | `0x8C12C5E0` |
+| partition table | `0x8C3DE0B8`, 256 pointers indexed by `ptid` |
+| file count | `+0x0C` of the partition descriptor |
+
+Versions present: `ADXF Ver.5.55 Build:Sep 08 1999` and
+`ADXT Ver.5.76 Build:Jan 28 2000`.
+
+Registration happens in one loop, at `0x8C028988`, which copies two five-word
+arrays to the stack and then calls `ADXF_LoadPartition` five times. The two
+arrays:
+
+| `ptid` | name, `0x8C0CD278` | usable entries, `0x8C0CD28C` | measured in the archive |
+|---|---|---|---|
+| 0 | `mot_dat.afs` | 1 | — |
+| 1 | `mdl_dat.afs` | 77 | 78 entries |
+| 2 | `tex_dat.afs` | 114 | 115 entries |
+| 3 | `snd_dat.afs` | 35 | — |
+| 4 | `adx_dat.afs` | 25 | 26 entries |
+
+The off-by-one is not an error: **the last entry of every archive is a
+zero-length terminator.** Verified on all three readable archives. So
+`mdl_dat` holds 77 usable entries, 0 to 76, and the training stage's entry 75
+is comfortably inside.
+
+Four near-identical functions each read one partition, and the immediate loaded
+into `r4` names them:
+
+| call site | `ptid` | archive |
+|---|---|---|
+| `0x8C029B2E` | 0 | `mot_dat` |
+| `0x8C02A750` | **1** | **`mdl_dat`** (function `0x8C02A5A8`) |
+| `0x8C02B6BA` | **2** | **`tex_dat`** |
+| `0x8C0474FA` | 3 | `snd_dat` |
+
+Sega also left the table's debug dump in: the format string
+`"%2d:%d %08X %08X %4d [%s]\n"` at `0x8C0CD544`, loaded by the instruction at
+`0x8C02BA9A`, with `"File Open Error"` just above it.
+
+### What is still unknown
+
+**How a stage names its geometry.** The `+0x08` list is audio from end to end,
+so the answer lies in another field or in code reached by computed address. The
+only known stage → entry pairing is the training stage's, and it was obtained by
+**measuring textures** (MDL 75 ↔ TEX 112, signatures recovered at distance 0.0),
+not by reading code.
+
+### Three lessons in method
+
+**A table of names says nothing about content.** The two versions' name lists
+are identical name for name, which at first led to the conclusion that no stage
+was exclusive. That is false: a list of names enumerates the *planned* slots,
+full or empty. You have to follow each record to its payload.
+
+**Resource identifiers are not addresses.** The `0x00A0xxxx` values unrolled as
+Real3D models with `model3d.py` fail on the very first polygon, on the face
+normal's norm.
+
+**A regularity is not a format.** The music enumeration splits 16/16 without a
+single discordant note, and that split is wrong. The field only revealed itself
+in the dispatcher's `extu.b`. A table that confirms a hypothesis on every one of
+its elements may be confirming only a special case: it is the code that states
+the format, not the data.
 
 ---
 
@@ -398,10 +515,21 @@ Python scripts, no dependencies, for Windows.
 | `cdi.py` | open the Dreamcast image and extract its files |
 | `afs.py` | read the Dreamcast version's AFS archives |
 | `nuage.py` | render a point cloud of the Dreamcast models, with no decoder |
+| `textures_dc.py` | decode Dreamcast textures — VQ, twiddle, three pixel formats — and pair the MDL and TEX entries |
+| `geometrie_dc.py` | export an MDL entry's geometry to OBJ, handling both vertex forms |
+| `retrouver.py` | find a dumped texture among the disc's 3,700, by signature |
+| `fermer_trous.py` | close an OBJ's boundary-edge loops, and repeat across the four quadrants |
+| `rendu_dessus.py` | rasterise an OBJ seen from above — judge an extraction without opening Blender |
+| `rendu_face.py` | the same, seen from the front |
+| `planche_dc.py` | contact sheet of every texture in one entry |
+| `desas_sh4.py` | SH-4 disassembler: reads an address without requiring it to be proven code |
+| `tables_sh4.py` | four discoverers — who loads a literal, who branches here, the `BRAF` tables, and the call graph walked upward |
+| `gdb_flycast.py` | remote GDB client for Flycast, standard library only |
 
-Four `.cmd` launchers chain what is needed, with no command line to retype:
+Five `.cmd` launchers chain what is needed, with no command line to retype:
 **Reconstruire les ROM arcade**, **Ouvrir le disque Dreamcast**,
-**Table des décors**, **Profil des modèles Dreamcast**. The default paths to
+**Table des décors**, **Profil des modèles Dreamcast**,
+**Sonder le binaire Dreamcast**. The default paths to
 the MAME zip and the Dreamcast image are overridden by the `FV2_ZIP` and
 `FV2_CDI` environment variables.
 
@@ -425,21 +553,29 @@ produced nothing convincing. Progress requires **observing execution flow**,
 which the public Supermodel build does not allow — its debugger is a compile
 time option absent from distributed binaries.
 
-**Resolving a resource identifier.** A stage names its geometry by a
-`(kind, index)` pair, and the kind's enumeration reads in the clear in both
-versions — but the code that turns that pair into data has not been found.
-That is the only lock left on the training stage: it would tell which entry of
-`MDL_DAT.AFS` carries index 0x18.
+**How a stage names its geometry.** The resource dispatcher has been found and
+read — see [Resolving resource identifiers](#resolving-resource-identifiers) —
+but it only handles audio: music, effects, and a third genre with hand-written
+cases. A stage's `+0x08` list is audio from end to end. Geometry therefore
+loads along another path, and while the `mdl_dat` reader is identified
+(`0x8C02A5A8`, partition 1), we do not know which index it receives for a given
+stage. The only known pairing, MDL 75 ↔ TEX 112 for the training stage, came
+from measuring textures.
 
-**The model format of `MDL_DAT.AFS`.** A record begins with four PowerVR2 Tile
-Accelerator parameter words baked into the file (Parameter Control, ISP/TSP,
-TSP, Texture Control), followed by a bounding box, counters and blocks of
-floats. The Texture Control's address field is 0: it is filled in at load
-time, which is why the entries of `TEX_DAT.AFS` carry no `PVRT` or `GBIX`
-header. The texture format itself is documented elsewhere: `celsowm/vf3-decomp`,
-`docs/formats/TEX.md` — no header, little-endian RGB565, PVR twiddle by tiles.
-Size and format read out of the model's own words: TSP bits 0-5 for U and V,
-Texture Control bits 30-27 for the format.
+**Bit 5 of the strip code.** A strip header is two words,
+`(code, vertex count)`, and the count is right on 96.8% of the archive's 52,944
+strips. The failures hinge on a single bit: without bit 5, 25,026 strips read
+at 100.0%; with it, 27,918 read at 93.9%. Among those failures the most common
+shortfall is exactly 2 — the signature of a continued strip, whose first two
+vertices would be carried over from the previous one and not stored. A
+plausible reading, unproven. Ruled out by measurement: too short an
+interleaving window, a normal stored elsewhere, any other uniform stride.
+
+**The role of each character's third, reduced entry** — 42 for Honey, 47 for
+Jane: broken armour or a level of detail, undecided. And **how the game picks
+Honey's second costume** (MDL 43 and 44), which it names nowhere: `NURSE`,
+`COSTUME`, `SECRET`, `MAID`, `APRON`, `OUTFIT`, swept in ASCII and in
+Shift-JIS across the whole binary — zero hits.
 
 **The role of the stage table's `+0x60` and `+0x68` fields**, and proof that
 the `0x1F8`-byte block really carries the collision.

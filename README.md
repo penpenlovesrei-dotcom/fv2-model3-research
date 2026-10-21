@@ -19,6 +19,7 @@ les bases de codes de triche, ni dans les guides de la version Dreamcast.
 - [Jouer en anglais](#jouer-en-anglais)
 - [Mode Survival](#mode-survival)
 - [La table de décors et le décor d'entraînement](#la-table-de-décors-et-le-décor-dentraînement)
+- [La résolution des identifiants de ressource](#la-résolution-des-identifiants-de-ressource)
 - [Les outils](#les-outils)
 - [Questions ouvertes](#questions-ouvertes)
 - [Portée et limites](#portée-et-limites)
@@ -339,12 +340,13 @@ de plans normalisés (±0.05, ±1.083, ±0.05) : collision ou cage, **non prouv�
 
 ### Le champ qui tranche : `+0x08`
 
-La liste de 8 identifiants qu'il pointe a pour quatrième entrée la **géométrie
-propre du décor**. C'est là, et seulement là, que les deux versions divergent :
+La liste de 8 identifiants qu'il pointe est **entièrement audio**. Son
+quatrième créneau porte la **musique** du décor, et c'est là, et seulement là,
+que les deux versions divergent :
 
 | décor | arcade | Dreamcast |
 |---|---|---|
-| **TEST** | **`0x00000000` — vide** | **`0x001800F0` — index 0x18** |
+| **TEST** | **`0x00000000` — vide** | **`0x001800F0` — index 24** |
 | WESTERN | `0x00A01001` | `0x000100F0` |
 | FURNACE | `0x00A01002` | `0x000200F0` |
 | AC_CARRIER | `0x00A01003` | `0x000300F0` |
@@ -358,28 +360,140 @@ propre du décor**. C'est là, et seulement là, que les deux versions divergent
 | TOWER | `0x00A01010` | `0x001000F0` |
 | GREAT_BM | `0x00A01012` | `0x001200F0` |
 
-Les douze décors de combat portent le même index des deux côtés. Les genres se
-correspondent un à un : arcade `0xA0/0x10` ↔ Dreamcast `0x00F0` (géométrie de
-décor), `0xA0/0x2E` ↔ `0x03A9`, `0xA0/0x2F` ↔ `0x04A9`, `0xA1/0x0B` ↔ `0x00FF`.
+Les douze décors de combat portent le même index des deux côtés. L'énumération
+complète du genre se lit en clair dans les deux images :
 
-Et l'énumération complète du genre « géométrie de décor » se lit en clair dans
-les deux images :
+- arcade `0x000EC048` : `00A01000` … `00A01013`, **20 créneaux (0–19)**
+- Dreamcast `0x00102420` : `000000F0` … `001800F0`, **25 créneaux (0–24)**
 
-- arcade `0x000EC048` : `00A01000` … `00A01013`, **20 créneaux (0x00–0x13)**
-- Dreamcast `0x00102420` : `000000F0` … `001800F0`, **25 créneaux (0x00–0x18)**
+La Dreamcast a donc **ajouté cinq morceaux**, et `TEST` pointe sur le dernier
+des cinq. Les trois premiers créneaux de la liste sont identiques dans les 27
+enregistrements — des banques d'effets communes — et les créneaux 4 et 5 sont
+une paire d'effets propre au décor, nulle pour `TEST`.
 
-**`TEST` est le décor d'entraînement, et sa géométrie n'existe que sur
-Dreamcast.** La console a ajouté les créneaux 0x14 à 0x18 et fait pointer `TEST`
-sur le dernier des cinq — la signature d'un ajout tardif, cohérente avec le
-reste de ce qui n'existe que sur console (`EMI` à l'indice 11 à la place de
-`TECHNO` et `DURAL`, le déblocage de Kuhn complété).
+**`TEST` est le décor d'entraînement, et il n'existe que sur Dreamcast.**
+Cohérent avec le reste de ce qui n'existe que sur console : `EMI` à l'indice 11
+à la place de `TECHNO` et `DURAL`, le déblocage de Kuhn complété.
 
-L'arcade, elle, porte **tout le reste** du décor : son nom, son enregistrement
-entier, ses paramètres de caméra, sa couleur de brouillard propre, son bloc de
-`0x1F8`. Seule la ressource de géométrie manque. Et son propre genre a huit
-créneaux énumérés et inutilisés — 0, 6, 7, 8, 9, 0xF, 0x11, 0x13.
+L'arcade porte **tout le reste** du décor : son nom, son enregistrement entier,
+ses paramètres de caméra, sa couleur de brouillard, son bloc de `0x1F8`.
 
-### Deux leçons de méthode
+---
+
+## La résolution des identifiants de ressource
+
+Le point dur du chantier. Ghidra ne voyait rien : le binaire n'est désassemblé
+qu'à 32,4 %, aucune fonction ne référençait ces tables, et la table de décors
+n'est pointée par **aucun littéral**. La réponse est venue d'un balayage
+d'octets, qui ne cherche pas à prouver que c'est du code — il le lit.
+
+### La disposition, et l'erreur qu'elle a coûtée
+
+Un identifiant de ressource se lit sur **trois champs**, pas deux :
+
+```
+ 31                    16 15         8 7         0
++------------------------+------------+-----------+
+|         index          | sous-genre |   genre   |
++------------------------+------------+-----------+
+```
+
+L'énumération des musiques est parfaitement régulière — `000000F0`,
+`000100F0`, … `001800F0` — ce qui donne un découpage 16/16 très convaincant et
+**faux**. Il tient tant que le sous-genre vaut 0, et il tombe dès `0x000803A9`
+et `0x000604A9` : ce ne sont pas deux genres voisins mais **un seul**, `0xA9`,
+avec les sous-genres 3 et 4.
+
+Ce qui tranche n'est pas la régularité de la table, c'est le répartiteur.
+
+### Le répartiteur : `0x8C047C9E`
+
+Un argument, l'identifiant. Il extrait le bas octet et compare :
+
+```
+extu.b r11,r0        ; r0 = id & 0xFF
+cmp/eq #0xA9   ->  0x8C047CCA
+cmp/eq #0xFF   ->  0x8C047D44
+cmp/eq #0xF0   ->  0x8C047E54
+sinon              0x8C047E68   (rien)
+```
+
+Trois genres, et trois seulement.
+
+**Genre `0xF0` — musique.** La branche fait `shlr16` puis `extu.b` : l'index
+est bien en haut. Elle aboutit à `0x8C0479E8`, qui réserve 284 868 octets,
+remet un flottant de volume à zéro, et lit la partition **4** —
+`adx_dat.afs`. Les 13 indices employés par la table de décors sont tous des
+flux **CRI ADX** valides, 44 100 Hz stéréo, marque `(c)CRI` en place. Celui du
+décor d'entraînement, l'index 24, est le plus long de l'archive : 11,97 Mo.
+
+**Genre `0xA9` — effets sonores.** Masque `0x0000FF00` puis `shlr8` : c'est le
+sous-genre qui sert. La branche aboutit à `0x8C0C1D20`, qui écrit
+l'identifiant dans un anneau de `0xA0800400` à `0xA0800500` et reboucle au
+début. C'est la RAM de l'**AICA**, par le bus G2 — une file de commandes vers
+le processeur sonore.
+
+**Genre `0xFF`.** Une chaîne de `cmp/eq` sur `id & 0x00FF00FF`, écrite à la
+main, un cas par index.
+
+### Le système de fichiers est celui de CRI
+
+Les cinq archives sont des **partitions ADXF**, le système de fichiers de CRI —
+« AFS » veut dire *ADX File System*. La bibliothèque laisse ses noms de
+fonctions dans ses messages d'erreur, ce qui nomme toute la couche d'un coup :
+
+| | |
+|---|---|
+| `ADXF_LoadPartition` | `0x8C12BA6A` |
+| `ADXF_Open` | `0x8C12BE4E` |
+| `ADXF_GetFileRange` | `0x8C12C5E0` |
+| table des partitions | `0x8C3DE0B8`, 256 pointeurs indexés par `ptid` |
+| nombre de fichiers | `+0x0C` du descripteur de partition |
+
+Versions présentes : `ADXF Ver.5.55 Build:Sep 08 1999` et
+`ADXT Ver.5.76 Build:Jan 28 2000`.
+
+L'enregistrement se fait en une boucle, à `0x8C028988`, qui recopie deux
+tableaux de cinq mots vers la pile puis appelle `ADXF_LoadPartition` cinq fois.
+Les deux tableaux :
+
+| `ptid` | nom, `0x8C0CD278` | entrées utiles, `0x8C0CD28C` | mesuré dans l'archive |
+|---|---|---|---|
+| 0 | `mot_dat.afs` | 1 | — |
+| 1 | `mdl_dat.afs` | 77 | 78 entrées |
+| 2 | `tex_dat.afs` | 114 | 115 entrées |
+| 3 | `snd_dat.afs` | 35 | — |
+| 4 | `adx_dat.afs` | 25 | 26 entrées |
+
+L'écart d'une unité n'est pas une erreur : **la dernière entrée de chaque
+archive est un terminateur de taille nulle.** Vérifié sur les trois archives
+lisibles. `mdl_dat` porte donc 77 entrées utiles, 0 à 76, et l'entrée 75 du
+décor d'entraînement est bien dedans.
+
+Quatre fonctions quasi identiques lisent une partition chacune, et l'immédiat
+chargé dans `r4` les nomme :
+
+| site d'appel | `ptid` | archive |
+|---|---|---|
+| `0x8C029B2E` | 0 | `mot_dat` |
+| `0x8C02A750` | **1** | **`mdl_dat`** (fonction `0x8C02A5A8`) |
+| `0x8C02B6BA` | **2** | **`tex_dat`** |
+| `0x8C0474FA` | 3 | `snd_dat` |
+
+Sega a aussi laissé le vidage de debug de la table : la chaîne de format
+`"%2d:%d %08X %08X %4d [%s]\n"` à `0x8C0CD544`, chargée par l'instruction à
+`0x8C02BA9A`, avec `"File Open Error"` juste au-dessus.
+
+### Ce qui reste inconnu
+
+**Comment un décor désigne sa géométrie.** La liste de `+0x08` est audio de
+bout en bout, donc la réponse est dans un autre champ ou dans du code atteint
+par adresse calculée. Le seul appariement décor → entrée connu est celui du
+décor d'entraînement, et il a été obtenu par la **mesure des textures**
+(MDL 75 ↔ TEX 112, signatures retrouvées à l'écart 0,0), pas par la lecture du
+code.
+
+### Trois leçons de méthode
 
 **Une table de noms ne dit rien du contenu.** Les listes de noms des deux
 versions sont identiques nom pour nom, ce qui a d'abord fait conclure qu'aucun
@@ -389,8 +503,13 @@ charge utile.
 
 **Les identifiants de ressource ne sont pas des adresses.** Les `0x00A0xxxx`
 déroulés comme des modèles Real3D avec `model3d.py` échouent dès le premier
-polygone, sur la norme de la normale de face. Ce sont des identifiants
-`(genre, index)`, résolus par un code qui n'est pas encore trouvé.
+polygone, sur la norme de la normale de face.
+
+**Une régularité n'est pas un format.** L'énumération des musiques se découpe
+en 16/16 sans la moindre fausse note, et ce découpage est faux. Le champ ne
+s'est montré que dans le `extu.b` du répartiteur. Une table qui confirme une
+hypothèse sur tous ses éléments peut n'en confirmer qu'un cas particulier :
+c'est le code qui dit le format, pas les données.
 
 ---
 
@@ -415,10 +534,21 @@ Scripts Python, sans dépendance, pour Windows.
 | `cdi.py` | ouvre l'image Dreamcast et en sort les fichiers |
 | `afs.py` | lit les archives AFS de la version Dreamcast |
 | `nuage.py` | rend un nuage de points des modèles Dreamcast, sans décodeur |
+| `textures_dc.py` | décode les textures Dreamcast — VQ, twiddle, trois formats de pixel — et apparie les entrées MDL et TEX |
+| `geometrie_dc.py` | sort la géométrie d'une entrée MDL en OBJ, avec ses deux formes de sommet |
+| `retrouver.py` | retrouve une texture extraite parmi les 3 700 du disque, par signature |
+| `fermer_trous.py` | referme les boucles d'arêtes de bord d'un OBJ, et répète aux quatre quadrants |
+| `rendu_dessus.py` | rastérise un OBJ vu de dessus — juger une extraction sans ouvrir Blender |
+| `rendu_face.py` | le même, vu de face |
+| `planche_dc.py` | planche contact de toutes les textures d'une entrée |
+| `desas_sh4.py` | désassembleur SH-4 : lit une adresse sans demander que ce soit du code |
+| `tables_sh4.py` | quatre découvreurs — qui charge un littéral, qui saute ici, les tables de `BRAF`, et le graphe d'appels remonté |
+| `gdb_flycast.py` | client GDB distant pour Flycast, en bibliothèque standard |
 
-Quatre lanceurs `.cmd` enchaînent ce qu'il faut, sans ligne à recopier :
+Cinq lanceurs `.cmd` enchaînent ce qu'il faut, sans ligne à recopier :
 **Reconstruire les ROM arcade**, **Ouvrir le disque Dreamcast**,
-**Table des décors**, **Profil des modèles Dreamcast**. Les chemins par défaut
+**Table des décors**, **Profil des modèles Dreamcast**,
+**Sonder le binaire Dreamcast**. Les chemins par défaut
 du zip MAME et de l'image Dreamcast se surchargent par les variables
 d'environnement `FV2_ZIP` et `FV2_CDI`.
 
@@ -443,22 +573,31 @@ convaincant. La suite demande d'**observer le flot d'exécution**, ce que la
 build publique de Supermodel ne permet pas — son débogueur est une option de
 compilation absente des binaires distribués.
 
-**La résolution d'un identifiant de ressource.** Un décor nomme sa géométrie
-par un couple `(genre, index)`, et l'énumération du genre se lit en clair dans
-les deux versions — mais le code qui transforme ce couple en données n'est pas
-trouvé. C'est le seul verrou sur le décor d'entraînement : il faudrait savoir
-quelle entrée de `MDL_DAT.AFS` porte l'index 0x18.
+**Comment un décor désigne sa géométrie.** Le répartiteur de ressources est
+trouvé et lu — voir [La résolution des identifiants de
+ressource](#la-résolution-des-identifiants-de-ressource) — mais il ne traite
+que de l'audio : musique, effets, et un troisième genre à cas écrits à la main.
+La liste de `+0x08` d'un décor est audio de bout en bout. La géométrie se
+charge donc par un autre chemin, et le chargeur de `mdl_dat` est identifié
+(`0x8C02A5A8`, partition 1) sans que l'on sache quel index il reçoit pour un
+décor donné. Le seul appariement connu, MDL 75 ↔ TEX 112 pour le décor
+d'entraînement, a été obtenu par la mesure des textures.
 
-**Le format de modèle de `MDL_DAT.AFS`.** Un enregistrement commence par quatre
-mots de paramètre du Tile Accelerator du PowerVR2 pré-cuits dans le fichier
-(Parameter Control, ISP/TSP, TSP, Texture Control), suivis d'une boîte
-englobante, de compteurs et de blocs de flottants. Le champ adresse du Texture
-Control vaut 0 : il est renseigné au chargement, ce qui explique que les
-entrées de `TEX_DAT.AFS` n'aient aucun en-tête `PVRT` ni `GBIX`. Le format des
-textures, lui, est documenté ailleurs : `celsowm/vf3-decomp`,
-`docs/formats/TEX.md` — pas d'en-tête, RGB565 petit-boutien, twiddle PVR par
-tuiles. Taille et format se lisent dans les mots du modèle : bits 0-5 du TSP
-pour U et V, bits 30-27 du Texture Control pour le format.
+**Le bit 5 du code de ruban.** L'en-tête d'un ruban est deux mots,
+`(code, nombre de sommets)`, et le compte est juste à 96,8 % sur les
+52 944 rubans de l'archive. Les échecs tiennent à un seul bit : sans le bit 5,
+25 026 rubans se lisent à 100,0 % ; avec, 27 918 se lisent à 93,9 %. Dans ces
+échecs l'écart le plus fréquent est exactement 2 — signature d'un ruban
+continué, dont les deux premiers sommets seraient repris du précédent et non
+stockés. Lecture plausible, non prouvée. Écarté par la mesure : une fenêtre
+d'intercalation trop courte, une normale rangée ailleurs, un autre pas
+uniforme.
+
+**Le rôle de la troisième entrée réduite** de chaque personnage — 42 pour
+Honey, 47 pour Jane : armure brisée ou niveau de détail, non tranché. Et
+**comment le jeu choisit le second costume de Honey** (MDL 43 et 44), qu'il ne
+nomme nulle part : `NURSE`, `COSTUME`, `SECRET`, `MAID`, `APRON`, `OUTFIT`,
+balayés en ASCII et en Shift-JIS dans tout le binaire — zéro occurrence.
 
 **Le rôle des champs `+0x60` et `+0x68` de la table de décors**, et la preuve
 que le bloc de `0x1F8` octets porte bien la collision.
