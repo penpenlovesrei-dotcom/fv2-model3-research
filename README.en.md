@@ -20,6 +20,7 @@ databases, nor in the Dreamcast guides.
 - [Survival mode](#survival-mode)
 - [The stage table and the training stage](#the-stage-table-and-the-training-stage)
 - [Resolving resource identifiers](#resolving-resource-identifiers)
+- [The Dreamcast 2D resources](#the-dreamcast-2d-resources-and-the-19980605-title-screen)
 - [Tools](#tools)
 - [Open questions](#open-questions)
 - [Scope and limits](#scope-and-limits)
@@ -613,6 +614,172 @@ single discordant note, and that split is wrong. The field only revealed itself
 in the dispatcher's `extu.b`. A table that confirms a hypothesis on every one of
 its elements may be confirming only a special case: it is the code that states
 the format, not the data.
+
+---
+
+## The Dreamcast 2D resources, and the 1998.06.05 title screen
+
+The Dreamcast port draws its entire front end — logos, menus, banners, font,
+staff roll — through a single pair of functions and two levels of tables. The
+whole mechanism reads out of `1ST_READ.BIN`, and it hands over the MDL ↔ TEX
+pairing that until now had to be inferred from sizes.
+
+### The resource record: 16 bytes, with the index written out
+
+Right after each texture descriptor table, in the `0x8C0E4000`–`0x8C0E9000`
+range, sit 16-byte records:
+
+```
++0x00  u32  index of the entry in TEX_DAT.AFS
++0x04  u32  pointer to the texture descriptor table
++0x08  u32  pointer to the pattern list
++0x0C  u32  trailing word
+```
+
+**36 records**, and the first field is the TEX index in plain sight. It
+replaces pairing by exact size tiling: no more walking the MDL entries in
+order and taking the first still-free TEX entry, and no more trap when two
+costumes share a size. The check is immediate — the six records of bank
+`0x8C0E4A9C` carry 24, 25, 26, 28, 27, 29; the five of `0x8C0E4CC0` carry
+101, 103, 102, 105, 104.
+
+It also names the banks the size heuristic left unmatched:
+
+| bank | TEX entries |
+|---|---|
+| `0x8C0E64FC` | 81, 82, 83, 84, 85 |
+| `0x8C0E6B14` | 57 |
+| `0x8C0E7900` | 49 |
+| `0x8C0E7C2C` | 93 |
+
+### The pattern list: 10-byte records
+
+The `+0x08` pointer leads to a list of **patterns**, each one a rectangle cut
+out of one of the bank's textures:
+
+```
++0x00  u16  rank of the descriptor within the bank's table
++0x02  u16  x
++0x04  u16  y
++0x06  u16  width
++0x08  u16  height
+```
+
+A pattern is named by its **rank in the list**, not by its address.
+
+What establishes the 10-byte stride — rather than 8 or 16 — is not apparent
+regularity but the tiling: for TEX entry 16 the list runs from `0x8C0E5808`
+to `0x8C0E5BC8`, 960 bytes, **exactly 96 records**, and all 96 rectangles fall
+inside the bounds of the descriptor they cite, without a single exception.
+For TEX entry 97: 1,220 bytes, 122 records, none out of bounds.
+
+TEX entry 16 is the whole front end:
+
+| ranks | descriptor | content |
+|---|---|---|
+| 0–2, 9 | 2 | `Presented by SEGA`, AM2, ADX, `Copyright © 1996,1998 CRI` |
+| **3–8** | **6–11** | **the title screen logo, a 3×2 mosaic of 256×256 tiles** |
+| 10–18 | 18 | `ARCADE`, `V.S.`, `INTERNET`, `RANDOM NETWORK`, `SURVIVAL`, `TRAINING VS`, `OPTIONS` |
+| **19–25** | **12–17** | **a second logo, inert — see below** |
+| 26–29 | 1 | `RANKING`, `VICTORY STREAK`, `SURVIVAL MODE`, `BEST TIME` banners |
+| 30–95 | 0, 3, 4, 5 | the font, the roster names, the staff roll |
+
+### The two functions
+
+| address | role |
+|---|---|
+| `0x8C02A23A` | `load_resource(record)` — sets the **current** resource |
+| `0x8C029598` | `draw(rank, x, y)` — the rank is in **R4**, x in R5, y in R6 |
+
+`draw` is not given the resource: it works on whichever one the last
+`load_resource` set. Reading these calls therefore means following the
+**order of execution**, not just the call graph.
+
+One function establishes it, `0x8C019CBC`:
+
+```
+mov.l #0x8C0E5BC8,R4 ; jsr @Rn      loads the title screen resource
+mov #3,R4 ; jsr @Rn   (x=0,   y=0)
+mov #4,R4 ; jsr @Rn   (x=256, y=0)
+mov #5,R4 ; jsr @Rn   (x=512, y=0)
+mov #6,R4 ; jsr @Rn   (x=0,   y=256)
+mov #7,R4 ; jsr @Rn   (x=256, y=256)
+mov #8,R4 ; jsr @Rn   (x=512, y=256)
+```
+
+Six ranks, six positions: the 768×512 3×2 mosaic of the logo. The positions
+match the tile layout obtained separately by decoding the textures.
+
+### The "1998.06.05 SPECIAL VERSION" logo
+
+Descriptors **12 to 17** of bank `0x8C0E56C8` describe six 256×256 tiles in
+uncompressed ARGB1555, at `0x615800`–`0x6B5800` of `TEX_DAT.AFS`, 786,432
+bytes in all. Assembled, they give a second title screen: the same
+`FV2 / FIGHTING VIPERS 2` logo on red instead of black, without the `™`, and
+carrying two extra lines — **`1998.06.05  SPECIAL VERSION`**.
+
+That is the title screen of the June 1998 event build of the Model 3 arcade
+machine, left whole on the 2001 Dreamcast disc.
+
+This is not leftovers appended past the table. The six descriptors are in the
+one and only table of entry 16, which tiles the entry to the byte
+(2,566,144 = 2,566,144), so the tiles are uploaded to VRAM along with the rest
+every time the front end is shown. And they have **declared patterns**, ranks
+19 to 25, in the same format and with the same full-frame crop as the six of
+the retail logo.
+
+**Nothing draws them.** The survey is complete, closed by three measurements
+that leave no blind spot:
+
+*The sites that touch the resource.* The literal `0x8C0E5BC8` appears
+**exactly 11 times** in the file, and Ghidra sees all of them: there is no
+hidden pool in the undisassembled part. Thirteen sites use it, all read. Seven
+only perform an `f(1, resource)` registration. The other six draw, and these
+are all the ranks they ask for:
+
+| function | ranks |
+|---|---|
+| `0x8C019CBC`, `0x8C01CBC8` | 3, 4, 5, 6, 7, 8 |
+| `0x8C019D18` | 17, 18 |
+| `0x8C01CC28` | 0, 1, 83, then a table (below) |
+| `0x8C0A6874` | 26, 27, 28, 29, 31, 33 |
+
+*The title screen's dispatch.* `0x8C020C24` is a state machine: a chain of
+`cmp/eq` on a state read from RAM, cases 0 to 7 and 11 to 15. Four states —
+**0, 3, 5 and 7** — enter the logo block, and all four load the **same
+constant address** from the literal pool, `0x8C019CBC`, followed by a `jsr`.
+The drawer is not selected by an index into a table of variants, nor by a
+flag: there is no slot a special version could plug into. The gap at states 8,
+9 and 10 is not an amputation — they are handled by a sibling dispatch in the
+same family.
+
+*The one computed rank.* In `0x8C01CC28`, the `param ≥ 16` branch reads its
+rank through `mov.w @(R0,R10),R4`, which the decompiler renders relative to
+the stack frame. The base is not in RAM: the prologue copies **three static
+20-byte tables** onto the stack, through three calls to the game's `memcpy`.
+
+| source | role | contents |
+|---|---|---|
+| `0x8C0CCC74` | rank | 79, 80, 81, 82, 84, 85, 86, 87, 88, 89 |
+| `0x8C0CCC4C` | x | 185, 170, 170, 170, 172, 172, 172, 173, 172, 129 |
+| `0x8C0CCC60` | y | 212, 187, 158, 137, 152, 152, 152, 168, 57, 212 |
+
+Ranks 79 to 89 point at descriptors 3, 4 and 5: the **staff roll** sheets. No
+value between 19 and 25.
+
+Finally, no strings: `1998.06.05`, `19980605`, `SPECIAL`, `EVENT`, `LIMITED`,
+`GABBA`, and their Japanese equivalents `特別版`, `スペシャル`, `イベント`,
+swept in latin-1, UTF-16LE and Shift-JIS across all **721,012,628 bytes** of
+the `.cdi` image, padding included — zero hits. It was never a serious lead:
+the AFS archives have no name block (the word following the table is
+`(0, 0)`), no texture on the disc carries a name, and all on-screen text is
+artwork.
+
+**Conclusion.** The image, its six descriptors and its seven patterns are on
+the disc, complete and well formed. The instruction to draw them was removed,
+and nothing executable is left of it. Twelve bytes separate the two title
+screens: the six `mov #3..8,R4` immediates in `0x8C019CBC` and the six in
+`0x8C01CBC8`.
 
 ---
 

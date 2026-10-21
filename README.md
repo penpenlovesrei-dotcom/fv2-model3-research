@@ -20,6 +20,7 @@ les bases de codes de triche, ni dans les guides de la version Dreamcast.
 - [Mode Survival](#mode-survival)
 - [La table de décors et le décor d'entraînement](#la-table-de-décors-et-le-décor-dentraînement)
 - [La résolution des identifiants de ressource](#la-résolution-des-identifiants-de-ressource)
+- [Les ressources 2D de la Dreamcast](#les-ressources-2d-de-la-dreamcast-et-lécran-titre-du-19980605)
 - [Les outils](#les-outils)
 - [Questions ouvertes](#questions-ouvertes)
 - [Portée et limites](#portée-et-limites)
@@ -635,6 +636,174 @@ en 16/16 sans la moindre fausse note, et ce découpage est faux. Le champ ne
 s'est montré que dans le `extu.b` du répartiteur. Une table qui confirme une
 hypothèse sur tous ses éléments peut n'en confirmer qu'un cas particulier :
 c'est le code qui dit le format, pas les données.
+
+---
+
+## Les ressources 2D de la Dreamcast, et l'écran-titre du 1998.06.05
+
+Le port Dreamcast dessine tout son habillage — logos, menus, bannières,
+police, staff roll — par un seul couple de fonctions et deux niveaux de
+tables. Le mécanisme se lit entièrement dans `1ST_READ.BIN`, et il livre au
+passage l'appariement MDL ↔ TEX que l'on obtenait jusqu'ici par la taille.
+
+### L'enregistrement de ressource : 16 octets, et l'indice en clair
+
+À la suite de chaque tableau de descripteurs de texture, dans la zone
+`0x8C0E4000`–`0x8C0E9000`, se trouvent des enregistrements de 16 octets :
+
+```
++0x00  u32  indice de l'entrée dans TEX_DAT.AFS
++0x04  u32  pointeur vers le tableau de descripteurs de texture
++0x08  u32  pointeur vers la liste de motifs
++0x0C  u32  mot de fin
+```
+
+**36 enregistrements**, et le premier champ est l'indice TEX écrit en clair.
+Il remplace l'appariement par pavage de tailles : plus besoin de parcourir les
+entrées MDL dans l'ordre en prenant la première entrée TEX encore libre, ni de
+craindre le piège des deux costumes de même taille. La vérification est
+immédiate — les six enregistrements de la banque `0x8C0E4A9C` portent 24, 25,
+26, 28, 27, 29 ; les cinq de `0x8C0E4CC0` portent 101, 103, 102, 105, 104.
+
+Il nomme aussi les banques que l'heuristique de taille laissait sans entrée :
+
+| banque | entrées TEX |
+|---|---|
+| `0x8C0E64FC` | 81, 82, 83, 84, 85 |
+| `0x8C0E6B14` | 57 |
+| `0x8C0E7900` | 49 |
+| `0x8C0E7C2C` | 93 |
+
+### La liste de motifs : des enregistrements de 10 octets
+
+Le pointeur `+0x08` mène à une liste de **motifs**, chacun un rectangle
+découpé dans une des textures de la banque :
+
+```
++0x00  u16  rang du descripteur dans le tableau de la banque
++0x02  u16  x
++0x04  u16  y
++0x06  u16  largeur
++0x08  u16  hauteur
+```
+
+Un motif se désigne par son **rang dans la liste**, pas par son adresse.
+
+Ce qui établit le pas de 10 — et non 8 ou 16 — n'est pas la régularité
+apparente mais le pavage : pour l'entrée TEX 16, la liste va de `0x8C0E5808`
+à `0x8C0E5BC8`, soit 960 octets, **exactement 96 enregistrements**, et les
+96 rectangles tombent dans les bornes du descripteur qu'ils citent, sans une
+seule exception. Pour l'entrée TEX 97 : 1 220 octets, 122 enregistrements,
+zéro hors bornes.
+
+L'entrée TEX 16 est tout l'habillage de la façade :
+
+| rangs | descripteur | contenu |
+|---|---|---|
+| 0–2, 9 | 2 | `Presented by SEGA`, AM2, ADX, `Copyright © 1996,1998 CRI` |
+| **3–8** | **6–11** | **le logo de l'écran-titre, mosaïque 3×2 de tuiles 256×256** |
+| 10–18 | 18 | `ARCADE`, `V.S.`, `INTERNET`, `RANDOM NETWORK`, `SURVIVAL`, `TRAINING VS`, `OPTIONS` |
+| **19–25** | **12–17** | **un second logo, inerte — voir plus bas** |
+| 26–29 | 1 | bannières `RANKING`, `VICTORY STREAK`, `SURVIVAL MODE`, `BEST TIME` |
+| 30–95 | 0, 3, 4, 5 | la police, les noms du roster, le staff roll |
+
+### Les deux fonctions
+
+| adresse | rôle |
+|---|---|
+| `0x8C02A23A` | `charge_ressource(enregistrement)` — pose la ressource **courante** |
+| `0x8C029598` | `dessine(rang, x, y)` — le rang est dans **R4**, x dans R5, y dans R6 |
+
+`dessine` ne reçoit pas la ressource : elle travaille sur celle que le dernier
+`charge_ressource` a posée. Toute lecture de ces appels doit donc suivre
+l'**ordre d'exécution**, pas seulement le graphe.
+
+L'établissement tient en une fonction, `0x8C019CBC` :
+
+```
+mov.l #0x8C0E5BC8,R4 ; jsr @Rn      charge la ressource de l'écran-titre
+mov #3,R4 ; jsr @Rn   (x=0,   y=0)
+mov #4,R4 ; jsr @Rn   (x=256, y=0)
+mov #5,R4 ; jsr @Rn   (x=512, y=0)
+mov #6,R4 ; jsr @Rn   (x=0,   y=256)
+mov #7,R4 ; jsr @Rn   (x=256, y=256)
+mov #8,R4 ; jsr @Rn   (x=512, y=256)
+```
+
+Six rangs, six positions : la mosaïque 3×2 de 768×512 du logo. Les positions
+recoupent le découpage des tuiles, obtenu séparément par le décodage des
+textures.
+
+### Le logo « 1998.06.05 SPECIAL VERSION »
+
+Les descripteurs **12 à 17** de la banque `0x8C0E56C8` décrivent six tuiles de
+256×256 en ARGB1555 non compressé, à `0x615800`–`0x6B5800` de `TEX_DAT.AFS`,
+786 432 octets en tout. Assemblées, elles donnent un second écran-titre :
+le même logo `FV2 / FIGHTING VIPERS 2` sur fond rouge au lieu de noir, sans le
+`™`, et portant deux lignes supplémentaires — **`1998.06.05  SPECIAL VERSION`**.
+
+C'est l'écran-titre de la version événementielle de juin 1998 de la borne
+Model 3, resté entier sur le disque Dreamcast de 2001.
+
+Ce n'est pas du rebut collé après le tableau. Les six descripteurs sont dans
+l'unique tableau de l'entrée 16, qui pave l'entrée à l'octet près
+(2 566 144 = 2 566 144), donc les tuiles sont téléversées en VRAM avec les
+autres à chaque affichage de la façade. Et elles ont leurs **motifs déclarés**,
+rangs 19 à 25, au même format et avec le même découpage plein cadre que les
+six du logo retail.
+
+**Rien ne les dessine.** Le relevé est complet, et il est fermé par trois
+mesures qui ne laissent pas d'angle mort :
+
+*Les sites qui touchent la ressource.* Le littéral `0x8C0E5BC8` apparaît
+**exactement 11 fois** dans le fichier, et Ghidra les voit toutes : il n'existe
+aucun pool caché dans la partie non désassemblée. Treize sites s'en servent,
+tous lus. Sept ne font qu'un `f(1, ressource)` d'enregistrement. Les six
+autres dessinent, et voici tous les rangs qu'elles demandent :
+
+| fonction | rangs |
+|---|---|
+| `0x8C019CBC`, `0x8C01CBC8` | 3, 4, 5, 6, 7, 8 |
+| `0x8C019D18` | 17, 18 |
+| `0x8C01CC28` | 0, 1, 83, puis une table (ci-dessous) |
+| `0x8C0A6874` | 26, 27, 28, 29, 31, 33 |
+
+*L'aiguillage de l'écran-titre.* `0x8C020C24` est une machine à états : une
+chaîne de `cmp/eq` sur un état lu en RAM, cases 0 à 7 et 11 à 15. Quatre
+états — **0, 3, 5 et 7** — entrent dans le bloc du logo, et les quatre
+chargent la **même adresse constante** depuis le pool, `0x8C019CBC`, suivie
+d'un `jsr`. Le dessineur n'est pas choisi par un index dans une table de
+variantes, ni par un drapeau : il n'existe aucun créneau où une version
+spéciale pourrait se brancher. Le trou des états 8, 9 et 10 n'est pas une
+amputation — ils sont traités par un aiguillage voisin de la même famille.
+
+*Le seul rang calculé.* Dans `0x8C01CC28`, la branche `param ≥ 16` lit son
+rang par `mov.w @(R0,R10),R4`, ce que le décompilateur rend relatif au cadre
+de pile. La base n'est pas en RAM : le prologue recopie **trois tables
+statiques de 20 octets** sur la pile, par trois appels au `memcpy` du jeu.
+
+| source | rôle | contenu |
+|---|---|---|
+| `0x8C0CCC74` | rang | 79, 80, 81, 82, 84, 85, 86, 87, 88, 89 |
+| `0x8C0CCC4C` | x | 185, 170, 170, 170, 172, 172, 172, 173, 172, 129 |
+| `0x8C0CCC60` | y | 212, 187, 158, 137, 152, 152, 152, 168, 57, 212 |
+
+Les rangs 79 à 89 pointent les descripteurs 3, 4 et 5 : les planches du
+**staff roll**. Aucune valeur entre 19 et 25.
+
+Enfin, aucune chaîne : `1998.06.05`, `19980605`, `SPECIAL`, `EVENT`,
+`LIMITED`, `GABBA`, et leurs équivalents japonais `特別版`, `スペシャル`,
+`イベント`, balayés en latin-1, UTF-16LE et Shift-JIS sur les
+**721 012 628 octets** de l'image `.cdi` entière, bourrage compris — zéro
+occurrence. Ce n'était pas une piste sérieuse : les archives AFS n'ont aucun
+bloc de noms (le mot qui suit la table vaut `(0, 0)`), aucune texture du
+disque ne porte de nom, et tout le texte à l'écran est en image.
+
+**Conclusion.** L'image, ses six descripteurs et ses sept motifs sont sur le
+disque, complets et conformes. L'ordre de les dessiner a été retiré, et il
+n'en reste aucune trace exécutable. Douze octets séparent les deux
+écrans-titres : les six immédiats `mov #3..8,R4` de `0x8C019CBC` et les six de
+`0x8C01CBC8`.
 
 ---
 
